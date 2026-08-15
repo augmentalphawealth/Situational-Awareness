@@ -1,0 +1,12 @@
+Metric,Value
+Total completed breakout trades,73755.0
+Average 10-day return (%),0.979
+Median 10-day return (%),0.022
+Average 20-day return (%),2.194
+Median 20-day return (%),0.419
+Average 30-day return (%),3.29
+25% target reached before 7% stop (%),12.575
+7% stop reached before 25% target (%),48.023
+Neither target nor stop in 30 days (%),39.402
+Average rule-based trade return (%),1.663
+Median rule-based trade return (%),-3.662
