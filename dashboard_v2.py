@@ -17,7 +17,7 @@ if 'sync_in_progress' not in st.session_state:
     st.session_state.sync_start_time = 0
     st.session_state.pre_sync_time = ""
 
-# --- CSS STYLING (UPGRADED FOR BIGGER FONTS & VISIBILITY) ---
+# --- CSS STYLING (UPGRADED FOR PROPER FITS & READABILITY) ---
 st.markdown("""
     <style>
     .main { background-color: #f8fafc; }
@@ -199,11 +199,11 @@ def step_next_day():
     if len(curr_idx) > 0 and curr_idx[0] < len(unique_dates) - 1:
         st.session_state.analysis_date = pd.to_datetime(unique_dates[curr_idx[0] + 1])
 
-# --- HEADER ROW ---
-h1, h_space, h2, h3 = st.columns([3.2, 0.3, 2.2, 1.3])
+# --- HEADER ROW (ADJUSTED COLUMNS & NOWRAP) ---
+h1, h_space, h2, h3 = st.columns([4.2, 0.2, 2.5, 1.4])
 with h1:
-    st.markdown("<h1 style='margin-top: 5px; margin-bottom: 0px; font-weight: 900; color: #0f172a;'>🎯 MARKET BREADTH DASHBOARD</h1>", unsafe_allow_html=True)
-    st.markdown("<div style='font-size: 15px; color: #64748b; font-weight: 700;'>Universe: Broad Market Constituent Stocks</div>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 5px; margin-bottom: 0px; font-weight: 900; color: #0f172a; white-space: nowrap;'>🎯 MARKET BREADTH DASHBOARD</h2>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size: 15px; color: #64748b; font-weight: 700; margin-top: 2px;'>Universe: Broad Market Constituent Stocks</div>", unsafe_allow_html=True)
 with h2:
     st.write("")
     n1, n2, n3 = st.columns([1, 1.5, 1])
@@ -285,7 +285,7 @@ up_vol_pct = (up_vol / tot_vol * 100) if tot_vol > 0 else 50.0
 # Signals
 brake_signals = []
 if (pct_20 - pct_50) < -8: brake_signals.append(f"Short-Term Breadth Breakdown: % above 20 EMA ({pct_20:.1f}%) is far below % above 50 EMA ({pct_50:.1f}%)")
-if large50 > 65 and micro50 < 45: brake_signals.append(f"Cap Divergence: Large-caps are holding up ({large50:.0f}%) while Micro-caps break down ({micro50:.0f}%)")
+if large50 > 65 and micro50 < 45: brake_signals.append(f"Liquidity Divergence: Top 100 Liq are holding up ({large50:.0f}%) while Micro Liq break down ({micro50:.0f}%)")
 if ftr < 40: brake_signals.append(f"Breakouts Failing: T+3 win rate dropped to {ftr:.1f}%")
 if net_hl < 0 and regime_score > 50: brake_signals.append(f"New Lows Expanding: More stocks hitting 52-week lows than highs despite market uptrend")
 if mcclellan < 0 and regime_score > 60: brake_signals.append(f"Momentum Divergence: McClellan Oscillator is negative while long-term trend remains up")
@@ -304,6 +304,7 @@ with t_sel2:
     timeframe = st.radio("Chart Lookback Window:", ["3M", "6M", "1Y", "3Y", "Max"], horizontal=True, index=2)
 tf_map = {"3M": 63, "6M": 126, "1Y": 252, "3Y": 756, "Max": len(df_filtered)}
 df_view = df_filtered.tail(tf_map.get(timeframe, 252))
+last_date = df_view['Date'].iloc[-1]
 
 # ==============================================================================
 # PANEL 1: CURRENT MARKET ENVIRONMENT (TREND & HEALTH)
@@ -349,11 +350,22 @@ with st.container(border=True):
     st.markdown("<div class='card-title' style='font-size: 18px;'>📈 Trend Breadth (Stocks above Moving Averages)</div>", unsafe_allow_html=True)
     st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Shows what % of the market is in short (20), medium (50), and long-term (200) uptrends. Bull markets stay above 50%.</div>", unsafe_allow_html=True)
     fig_ema = go.Figure()
+    
+    val_200 = df_view['Pct_Above_200_EMA'].iloc[-1]
+    val_50 = df_view['Pct_Above_50_EMA'].iloc[-1]
+    val_20 = df_view['Pct_Above_20_EMA'].iloc[-1]
+
     fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_200_EMA'], name='% > 200 EMA (Long Term)', line=dict(color='#22c55e', width=3.5)))
     fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_50_EMA'], name='% > 50 EMA (Medium Term)', line=dict(color='#f97316', width=3)))
     fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_20_EMA'], name='% > 20 EMA (Short Term)', line=dict(color='#06b6d4', width=2.5)))
     fig_ema.add_hline(y=50, line_dash="dash", line_color="#94a3b8", line_width=2)
-    fig_ema.update_layout(height=450, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), plot_bgcolor="white", paper_bgcolor="white")
+    
+    # Adding visible latest reading annotations
+    fig_ema.add_annotation(x=last_date, y=val_200, text=f"<b>{val_200:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#22c55e', size=14))
+    fig_ema.add_annotation(x=last_date, y=val_50, text=f"<b>{val_50:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#f97316', size=14))
+    fig_ema.add_annotation(x=last_date, y=val_20, text=f"<b>{val_20:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#06b6d4', size=14))
+
+    fig_ema.update_layout(height=360, font=dict(size=14), margin=dict(l=10, r=50, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), plot_bgcolor="white", paper_bgcolor="white")
     fig_ema.update_xaxes(showgrid=False)
     fig_ema.update_yaxes(range=[0, 100], showgrid=True, gridcolor='#f1f5f9')
     st.plotly_chart(fig_ema, use_container_width=True)
@@ -364,7 +376,7 @@ with st.container(border=True):
     fig_ad = go.Figure()
     if 'AD_Line' in df_view.columns:
         fig_ad.add_trace(go.Scatter(x=df_view['Date'], y=df_view['AD_Line'], name='A/D Line', line=dict(color='#3b82f6', width=3.5), fill='tozeroy', fillcolor='rgba(59, 130, 246, 0.1)'))
-    fig_ad.update_layout(height=450, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white")
+    fig_ad.update_layout(height=350, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white")
     fig_ad.update_xaxes(showgrid=False)
     fig_ad.update_yaxes(showgrid=True, gridcolor='#f1f5f9')
     st.plotly_chart(fig_ad, use_container_width=True)
@@ -383,7 +395,7 @@ with st.container(border=True):
             st.markdown(f"<div style='font-size:15px; color:#b91c1c; font-weight:800; margin-top:8px;'>• {b}</div>", unsafe_allow_html=True)
     else:
         st.markdown("<div class='status-badge badge-bull'>✅ NO DISTRIBUTION DETECTED</div>", unsafe_allow_html=True)
-        st.markdown("<div style='font-size:15px; color:#64748b; margin-top:8px; font-weight: 600;'>Breakouts are working and participation across caps is healthy. Keep trailing stops normal.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:15px; color:#64748b; margin-top:8px; font-weight: 600;'>Breakouts are working and participation across liquidity tiers is healthy. Keep trailing stops normal.</div>", unsafe_allow_html=True)
         
     st.markdown("<hr style='margin:15px 0px;'>", unsafe_allow_html=True)
     
@@ -396,19 +408,27 @@ with st.container(border=True):
         <div style='font-size:15px; color:#475569;'>
             <b>McClellan Oscillator:</b> <span style='color:{mcc_col}; font-weight:900;'>{mcclellan:.1f}</span> — {mcc_state}<br><br>
             <b>Breakout Win Rate (T+3):</b> <span style='font-weight:900;'>{ftr:.1f}%</span> — {ftr_state}<br><br>
-            <b>Large vs Micro Cap Spread:</b> <span style='font-weight:900;'>{(large50 - micro50):.1f}%</span>
+            <b>Top 100 Liq vs Micro Liq Spread:</b> <span style='font-weight:900;'>{(large50 - micro50):.1f}%</span>
         </div>
     """, unsafe_allow_html=True)
 
 # --- BIG FULL WIDTH CHARTS FOR PANEL 2 ---
 with st.container(border=True):
-    st.markdown("<div class='card-title' style='font-size: 18px;'>🏢 Large vs Micro Cap Divergence (% > 50 EMA)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Micro caps usually top out first. If Large Caps are high but Micro Caps plunge, institutional money is secretly selling the broader market while propping up the index.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-title' style='font-size: 18px;'>🏢 Liquidity Divergence (% > 50 EMA)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Micro liquidity stocks usually top out first. If Top 100 Liq are high but Micro Liq plunge, institutional money is secretly selling the broader market while propping up the index.</div>", unsafe_allow_html=True)
     fig_cap = go.Figure()
-    fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Large_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Large Caps', line=dict(color='#2563eb', width=3.5)))
-    fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Micro_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Micro Caps', line=dict(color='#ef4444', width=3, dash='dot')))
+    
+    val_l50 = df_view.get('Large_Pct_50_EMA', pd.Series([0], dtype=float)).iloc[-1]
+    val_mi50 = df_view.get('Micro_Pct_50_EMA', pd.Series([0], dtype=float)).iloc[-1]
+
+    fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Large_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Top 100 Liq', line=dict(color='#2563eb', width=3.5)))
+    fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Micro_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Micro Liq', line=dict(color='#ef4444', width=3, dash='dot')))
     fig_cap.add_hline(y=50, line_dash="dash", line_color="#cbd5e1", line_width=2)
-    fig_cap.update_layout(height=400, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor="white", paper_bgcolor="white")
+    
+    fig_cap.add_annotation(x=last_date, y=val_l50, text=f"<b>{val_l50:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#2563eb', size=14))
+    fig_cap.add_annotation(x=last_date, y=val_mi50, text=f"<b>{val_mi50:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#ef4444', size=14))
+
+    fig_cap.update_layout(height=350, font=dict(size=14), margin=dict(l=10, r=50, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor="white", paper_bgcolor="white")
     fig_cap.update_xaxes(showgrid=False)
     fig_cap.update_yaxes(range=[0, 100], showgrid=True, gridcolor='#f1f5f9')
     st.plotly_chart(fig_cap, use_container_width=True)
@@ -467,7 +487,7 @@ with st.container(border=True):
     
     # Net High-Lows
     fig_thrust.add_trace(go.Bar(x=df_view['Date'], y=df_view['Net_52W_High_Low'], name='Net 52W HL', marker_color=['#22c55e' if x>=0 else '#ef4444' for x in df_view['Net_52W_High_Low']]), row=2, col=1)
-    fig_thrust.update_layout(height=500, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), barmode='relative', showlegend=False, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white")
+    fig_thrust.update_layout(height=380, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), barmode='relative', showlegend=False, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white")
     fig_thrust.update_xaxes(showgrid=False)
     fig_thrust.update_yaxes(showgrid=True, gridcolor='#f1f5f9')
     st.plotly_chart(fig_thrust, use_container_width=True)
