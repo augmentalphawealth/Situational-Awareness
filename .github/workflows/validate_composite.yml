@@ -1,0 +1,37 @@
+name: Validate Fixed Composite Scores
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-composite:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Validate fixed composite scores
+        run: |
+          python Research/validate_composite_scores.py
+
+      - name: Commit validation outputs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Research/validation_*.csv
+          git commit -m "Add fixed composite score validation outputs" || echo "No new validation output changes"
+          git push
