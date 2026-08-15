@@ -39,6 +39,8 @@ st.markdown("""
     .badge-bear { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
     .badge-warn { background-color: #fef08a; color: #854d0e; border: 1px solid #fde047; }
     .badge-thrust { background-color: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+    
+    .chart-explainer { font-size: 11px; color: #64748b; font-style: italic; margin-top: -5px; margin-bottom: 10px; padding-left: 5px;}
 
     .stButton>button { border-radius: 6px; font-weight: 600; font-size: 12px; padding: 0.3rem 0.5rem; }
     div[data-testid="stDateInput"] input { padding: 0.3rem; font-size: 13px; text-align: center; }
@@ -179,7 +181,7 @@ def load_agg_data():
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values('Date').reset_index(drop=True)
         
-        # --- NEW CALCULATIONS: A/D Line, McClellan Oscillator, and TRIN ---
+        # --- CALCULATIONS: A/D Line, McClellan Oscillator, and TRIN ---
         if 'Advances' in df.columns and 'Declines' in df.columns:
             # 1. Cumulative A/D Line
             df['Net_Adv'] = df['Advances'] - df['Declines']
@@ -228,8 +230,8 @@ def step_next_day():
 # --- HEADER ROW ---
 h1, h_space, h2, h3 = st.columns([3.2, 0.3, 2.2, 1.3])
 with h1:
-    st.markdown("<h2 style='margin-top: 5px; margin-bottom: 0px; font-weight: 800; color: #0f172a;'>🎯 QUANTITATIVE BREADTH ENGINE</h2>", unsafe_allow_html=True)
-    st.markdown("<div style='font-size: 12px; color: #64748b; font-weight: 600;'>Universe: NIFTY 2450+ Stocks & Sectoral Aggregates</div>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin-top: 5px; margin-bottom: 0px; font-weight: 800; color: #0f172a;'>🎯 MARKET BREADTH DASHBOARD</h2>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size: 12px; color: #64748b; font-weight: 600;'>Universe: Broad Market Constituent Stocks</div>", unsafe_allow_html=True)
 with h2:
     st.write("")
     n1, n2, n3 = st.columns([1, 1.5, 1])
@@ -285,7 +287,6 @@ declines = int(latest.get('Declines', 0))
 if is_live_active and st.session_state.analysis_date == max_date:
     advances = live_advances
     declines = live_declines
-    # FIXED SYNTAX ERROR HERE
     actual_date_str = f"{datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime('%d %b %Y')} (⚡ LIVE)"
 
 # --- QUANT CALCULATIONS & ENGINE SIGNALS ---
@@ -316,48 +317,48 @@ up_vol_pct = (up_vol / tot_vol * 100) if tot_vol > 0 else 50.0
 
 # 1. TOP REVERSAL SIGNALS (Brake Triggers)
 brake_signals = []
-if (pct_20 - pct_50) < -8: brake_signals.append(f"Short-Term Breadth Breakdown: 20EMA is {pct_20:.1f}% vs 50EMA {pct_50:.1f}%")
-if large50 > 65 and micro50 < 45: brake_signals.append(f"Cap Divergence: Large-caps ({large50:.0f}%) propped while Micro-caps ({micro50:.0f}%) breaking down")
-if ftr < 40: brake_signals.append(f"Breakout Failure: T+3 Follow-Through Rate at {ftr:.1f}% (<40%)")
-if net_hl < 0 and regime_score > 50: brake_signals.append(f"52W Expansion Failure: Net NH-NL is negative ({net_hl:.0f}) during uptrend")
-if mcclellan < 0 and regime_score > 60: brake_signals.append(f"McClellan Divergence: Oscillator negative ({mcclellan:.1f}) despite high structural regime")
-if down4 / (up4 + 1) > 1.8: brake_signals.append(f"Aggressive Down-Thrusts: Down 4% vs Up 4% ratio is {down4/(up4+1):.1f}x")
+if (pct_20 - pct_50) < -8: brake_signals.append(f"Short-Term Breadth Breakdown: % above 20 EMA ({pct_20:.1f}%) is far below % above 50 EMA ({pct_50:.1f}%)")
+if large50 > 65 and micro50 < 45: brake_signals.append(f"Cap Divergence: Large-caps are holding up ({large50:.0f}%) while Micro-caps break down ({micro50:.0f}%)")
+if ftr < 40: brake_signals.append(f"Breakouts Failing: T+3 win rate dropped to {ftr:.1f}%")
+if net_hl < 0 and regime_score > 50: brake_signals.append(f"New Lows Expanding: More stocks hitting 52-week lows than highs despite market uptrend")
+if mcclellan < 0 and regime_score > 60: brake_signals.append(f"Momentum Divergence: McClellan Oscillator is negative while long-term trend remains up")
+if down4 / (up4 + 1) > 1.8: brake_signals.append(f"Aggressive Selling: Down 4% days are vastly outnumbering Up 4% days")
 
 # 2. BOTTOM REVERSAL SIGNALS (Ignition Triggers)
 bottom_signals = []
-if up4 >= 500: bottom_signals.append(f"🚀 Massive 3-Day Up Thrust: {up4:.0f} stocks surged >4%")
-if pct_20 < 12.0: bottom_signals.append(f"🌊 Deep Capitulation Washout: % stocks > 20 EMA hit {pct_20:.1f}% (<12%)")
-if up_vol_pct >= 88.0: bottom_signals.append(f"🔥 90/90 Ignition Day: Advancing turnover is {up_vol_pct:.1f}% of entire market")
-if trin >= 2.0: bottom_signals.append(f"🩸 TRIN Panic Extreme: Arms Index spiked to {trin:.2f} (Extreme Capitulation)")
-if net_hl < -250: bottom_signals.append(f"⚠️ Extreme Panic Selling: Net High-Low at {net_hl:.0f}")
+if up4 >= 500: bottom_signals.append(f"🚀 Breadth Thrust: Massive surge of {up4:.0f} stocks moving up >4% in 3 days")
+if pct_20 < 12.0: bottom_signals.append(f"🌊 Washout: Extreme oversold levels, only {pct_20:.1f}% of stocks are above their 20 EMA")
+if up_vol_pct >= 88.0: bottom_signals.append(f"🔥 Ignition Volume: {up_vol_pct:.1f}% of all volume flowed into advancing stocks today")
+if trin >= 2.0: bottom_signals.append(f"🩸 Capitulation: TRIN spiked to {trin:.2f}, showing extreme panic selling")
+if net_hl < -250: bottom_signals.append(f"⚠️ Extreme Fear: Huge surge in new 52-week lows ({net_hl:.0f})")
 
 st.markdown("<hr style='margin: 8px 0px;'>", unsafe_allow_html=True)
 
 # ==============================================================================
 # PANEL 1: CURRENT MARKET ENVIRONMENT (TREND & HEALTH)
 # ==============================================================================
-st.markdown("<div class='panel-header'>📊 PANEL 1: CURRENT MARKET ENVIRONMENT & STRUCTURAL HEALTH</div>", unsafe_allow_html=True)
+st.markdown("<div class='panel-header'>📊 PANEL 1: CURRENT MARKET TREND & HEALTH</div>", unsafe_allow_html=True)
 
 p1_c1, p1_c2, p1_c3, p1_c4 = st.columns(4)
 
 with p1_c1:
     with st.container(border=True):
-        st.markdown("<div class='card-title'>Core Regime Score</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Market Trend Score</div>", unsafe_allow_html=True)
         r_col = "#16a34a" if regime_score >= 60 else ("#eab308" if regime_score >= 40 else "#dc2626")
         st.markdown(f"<div class='metric-value' style='color:{r_col};'>{regime_score} <span style='font-size:14px; color:#64748b;'>/ 100</span></div>", unsafe_allow_html=True)
-        env_state = "AGGRESSIVE BULL" if regime_score >= 70 else ("CONSTRUCTIVE" if regime_score >= 50 else ("DEFENSIVE" if regime_score >= 40 else "RISK-OFF BEAR"))
+        env_state = "STRONG UPTREND" if regime_score >= 70 else ("CHOPPY / CAUTIOUS" if regime_score >= 50 else ("DEFENSIVE" if regime_score >= 40 else "DOWNTREND (CASH IS KING)"))
         st.markdown(f"<div class='metric-sub'>Status: <b>{env_state}</b></div>", unsafe_allow_html=True)
 
 with p1_c2:
     with st.container(border=True):
-        st.markdown("<div class='card-title'>Macro Participation (% > 200 EMA)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Long-Term Breadth (% > 200 EMA)</div>", unsafe_allow_html=True)
         m_col = "#16a34a" if pct_200 >= 50 else "#dc2626"
         st.markdown(f"<div class='metric-value' style='color:{m_col};'>{pct_200:.1f}%</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-sub'>{'Structural Bull (>50%)' if pct_200>=50 else 'Structural Bear (<50%)'}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-sub'>{'Bull Market (>50%)' if pct_200>=50 else 'Bear Market (<50%)'}</div>", unsafe_allow_html=True)
 
 with p1_c3:
     with st.container(border=True):
-        st.markdown("<div class='card-title'>Adv / Dec Ratio (Nifty 2450)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Adv / Dec Ratio (Broad Market)</div>", unsafe_allow_html=True)
         ad_ratio = (advances / declines) if declines > 0 else advances
         a_col = "#16a34a" if advances >= declines else "#dc2626"
         st.markdown(f"<div class='metric-value' style='color:{a_col};'>{advances} : {declines}</div>", unsafe_allow_html=True)
@@ -365,10 +366,10 @@ with p1_c3:
 
 with p1_c4:
     with st.container(border=True):
-        st.markdown("<div class='card-title'>Turnover Flow (Liquidity)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Up-Volume % (Liquidity Flow)</div>", unsafe_allow_html=True)
         u_col = "#16a34a" if up_vol_pct >= 50 else "#dc2626"
         st.markdown(f"<div class='metric-value' style='color:{u_col};'>{up_vol_pct:.1f}%</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-sub'>Advancing Share of Volume</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-sub'>% of volume in green stocks</div>", unsafe_allow_html=True)
 
 # Timeframe Selector for Historical Panels
 t_sel1, t_sel2 = st.columns([4, 1.2])
@@ -377,91 +378,100 @@ with t_sel2:
 tf_map = {"3M": 63, "6M": 126, "1Y": 252, "3Y": 756, "Max": len(df_filtered)}
 df_view = df_filtered.tail(tf_map.get(timeframe, 252))
 
-# PANEL 1 CHARTS: EMA Breadth & Cumulative AD Line
+# PANEL 1 CHARTS
 with st.container(border=True):
     p1_ch1, p1_ch2 = st.columns(2)
     with p1_ch1:
-        st.markdown("<div class='card-title'>Market-Wide EMA Participation (20 / 50 / 200 DEMA)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Trend Breadth (Stocks above Moving Averages)</div>", unsafe_allow_html=True)
         fig_ema = go.Figure()
         fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_200_EMA'], name='% > 200 EMA', line=dict(color='#16a34a', width=2)))
-        fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_50_EMA'], name='% > 50 EMA', line=dict(color='#9333ea', width=1.8)))
-        fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_20_EMA'], name='% > 20 EMA', line=dict(color='#3b82f6', width=1.5)))
-        fig_ema.add_hline(y=50, line_dash="dash", line_color="#94a3b8")
-        fig_ema.update_layout(height=260, margin=dict(l=5, r=5, t=10, b=5), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0))
-        fig_ema.update_yaxes(range=[0, 100], gridcolor='#f1f5f9')
+        fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_50_EMA'], name='% > 50 EMA', line=dict(color='#9333ea', width=1.5)))
+        fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_20_EMA'], name='% > 20 EMA', line=dict(color='#3b82f6', width=1)))
+        fig_ema.add_hline(y=50, line_dash="dash", line_color="#cbd5e1")
+        fig_ema.update_layout(height=240, margin=dict(l=5, r=5, t=10, b=5), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), plot_bgcolor="white", paper_bgcolor="white")
+        fig_ema.update_xaxes(showgrid=False)
+        fig_ema.update_yaxes(range=[0, 100], showgrid=True, gridcolor='#f1f5f9')
         st.plotly_chart(fig_ema, use_container_width=True)
+        st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Shows what % of the market is in short (20), medium (50), and long-term (200) uptrends. Bull markets stay above 50%.</div>", unsafe_allow_html=True)
+        
     with p1_ch2:
-        st.markdown("<div class='card-title'>Cumulative Advance-Decline Line (Breadth Volume)</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Cumulative Advance-Decline (A/D) Line</div>", unsafe_allow_html=True)
         fig_ad = go.Figure()
         if 'AD_Line' in df_view.columns:
             fig_ad.add_trace(go.Scatter(x=df_view['Date'], y=df_view['AD_Line'], name='A/D Line', line=dict(color='#0284c7', width=2), fill='tozeroy', fillcolor='rgba(2, 132, 199, 0.05)'))
-        fig_ad.update_layout(height=260, margin=dict(l=5, r=5, t=10, b=5), hovermode="x unified")
-        fig_ad.update_yaxes(gridcolor='#f1f5f9')
+        fig_ad.update_layout(height=240, margin=dict(l=5, r=5, t=10, b=5), hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white")
+        fig_ad.update_xaxes(showgrid=False)
+        fig_ad.update_yaxes(showgrid=True, gridcolor='#f1f5f9')
         st.plotly_chart(fig_ad, use_container_width=True)
+        st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> The 'heartbeat' of the market. If the index hits new highs but this line falls, the rally is fake (narrowing).</div>", unsafe_allow_html=True)
 
 # ==============================================================================
 # PANEL 2: TOP REVERSAL & DISTRIBUTION WARNING SYSTEM (BRAKES)
 # ==============================================================================
-st.markdown("<br><div class='panel-header'>🚨 PANEL 2: EARLY SIGNS OF TOPPING, EXHAUSTION & EUPHORIA</div>", unsafe_allow_html=True)
+st.markdown("<br><div class='panel-header'>🚨 PANEL 2: EARLY SIGNS OF TOPPING & DISTRIBUTION</div>", unsafe_allow_html=True)
 
 with st.container(border=True):
     top_c1, top_c2 = st.columns([1.2, 2.8])
     with top_c1:
-        st.markdown("<div class='card-title'>Distribution & Exhaustion Checklist</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Topping Warnings Checklist</div>", unsafe_allow_html=True)
         if brake_signals:
-            st.markdown(f"<div class='status-badge badge-warn'>⚠️ {len(brake_signals)} ACTIVE REVERSAL WARNINGS</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='status-badge badge-warn'>⚠️ {len(brake_signals)} ACTIVE WARNINGS (BRAKES ON)</div>", unsafe_allow_html=True)
             for b in brake_signals:
                 st.markdown(f"<div style='font-size:11px; color:#b91c1c; font-weight:700; margin-top:6px;'>• {b}</div>", unsafe_allow_html=True)
         else:
-            st.markdown("<div class='status-badge badge-bull'>✅ NO INSTITUTIONAL EXHAUSTION DETECTED</div>", unsafe_allow_html=True)
-            st.markdown("<div style='font-size:12px; color:#64748b; margin-top:8px;'>Breakout follow-through and broad market participation remain structurally sound.</div>", unsafe_allow_html=True)
+            st.markdown("<div class='status-badge badge-bull'>✅ NO DISTRIBUTION DETECTED</div>", unsafe_allow_html=True)
+            st.markdown("<div style='font-size:12px; color:#64748b; margin-top:8px;'>Breakouts are working and participation across caps is healthy. Keep trailing stops normal.</div>", unsafe_allow_html=True)
             
         st.markdown("<hr style='margin:10px 0px;'>", unsafe_allow_html=True)
         mcc_col = "#16a34a" if mcclellan >= 0 else "#dc2626"
         st.markdown(f"""
             <div style='font-size:11px; color:#475569;'>
                 <b>McClellan Oscillator:</b> <span style='color:{mcc_col}; font-weight:800;'>{mcclellan:.1f}</span><br>
-                <b>T+3 Breakout Win Rate:</b> <span style='color:{"#16a34a" if ftr>=40 else "#dc2626"}; font-weight:800;'>{ftr:.1f}%</span><br>
+                <b>Breakout Win Rate:</b> <span style='color:{"#16a34a" if ftr>=40 else "#dc2626"}; font-weight:800;'>{ftr:.1f}%</span><br>
                 <b>Large vs Micro Cap >50 EMA Spread:</b> <span style='font-weight:800;'>{(large50 - micro50):.1f}%</span>
             </div>
         """, unsafe_allow_html=True)
         
     with top_c2:
-        t2_tab1, t2_tab2 = st.tabs(["Cap Divergence (% > 50 EMA)", "McClellan Oscillator"])
+        t2_tab1, t2_tab2 = st.tabs(["Large vs Micro Cap Divergence", "McClellan Oscillator"])
         with t2_tab1:
             fig_cap = go.Figure()
-            fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Large_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Nifty Top 100 (Large)', line=dict(color='#2563eb', width=2)))
-            fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Mid_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Mid 150', line=dict(color='#f59e0b', width=1.5)))
-            fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Micro_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Micro Cap Liq', line=dict(color='#ef4444', width=2, dash='dot')))
+            fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Large_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Large Caps', line=dict(color='#2563eb', width=2)))
+            fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Micro_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Micro Caps', line=dict(color='#ef4444', width=2, dash='dot')))
             fig_cap.add_hline(y=50, line_dash="dash", line_color="#cbd5e1")
-            fig_cap.update_layout(height=220, margin=dict(l=5, r=5, t=10, b=5), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-            fig_cap.update_yaxes(range=[0, 100], gridcolor='#f1f5f9')
+            fig_cap.update_layout(height=210, margin=dict(l=5, r=5, t=10, b=5), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor="white", paper_bgcolor="white")
+            fig_cap.update_xaxes(showgrid=False)
+            fig_cap.update_yaxes(range=[0, 100], showgrid=True, gridcolor='#f1f5f9')
             st.plotly_chart(fig_cap, use_container_width=True)
+            st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Micro caps usually top out first. If Large Caps are high but Micro Caps plunge, institutional money is hiding.</div>", unsafe_allow_html=True)
+            
         with t2_tab2:
             fig_mcc = go.Figure()
             if 'McClellan_Osc' in df_view.columns:
                 colors = ['#22c55e' if val >= 0 else '#ef4444' for val in df_view['McClellan_Osc']]
                 fig_mcc.add_trace(go.Bar(x=df_view['Date'], y=df_view['McClellan_Osc'], name='McClellan Osc', marker_color=colors))
-            fig_mcc.update_layout(height=220, margin=dict(l=5, r=5, t=10, b=5), hovermode="x unified", showlegend=False)
-            fig_mcc.update_yaxes(gridcolor='#f1f5f9', zeroline=True, zerolinecolor='black', zerolinewidth=1)
+            fig_mcc.update_layout(height=210, margin=dict(l=5, r=5, t=10, b=5), hovermode="x unified", showlegend=False, plot_bgcolor="white", paper_bgcolor="white")
+            fig_mcc.update_xaxes(showgrid=False)
+            fig_mcc.update_yaxes(showgrid=True, gridcolor='#f1f5f9', zeroline=True, zerolinecolor='black', zerolinewidth=1)
             st.plotly_chart(fig_mcc, use_container_width=True)
+            st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Measures momentum of advancing stocks. Dropping below zero warns of short-term exhaustion.</div>", unsafe_allow_html=True)
 
 # ==============================================================================
 # PANEL 3: BOTTOM REVERSAL & CAPITULATION (THE GREEN LIGHT)
 # ==============================================================================
-st.markdown("<br><div class='panel-header'>🚀 PANEL 3: EARLY SIGNS OF BOTTOMING, CAPITULATION & THRUSTS</div>", unsafe_allow_html=True)
+st.markdown("<br><div class='panel-header'>🚀 PANEL 3: EARLY SIGNS OF BOTTOMING & THRUSTS</div>", unsafe_allow_html=True)
 
 with st.container(border=True):
     bot_c1, bot_c2 = st.columns([1.2, 2.8])
     with bot_c1:
-        st.markdown("<div class='card-title'>Capitulation & Ignition Signals</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Bottoming Signals Checklist</div>", unsafe_allow_html=True)
         if bottom_signals:
             st.markdown(f"<div class='status-badge badge-thrust'>🚀 {len(bottom_signals)} BOTTOM SIGNALS ACTIVE</div>", unsafe_allow_html=True)
             for s in bottom_signals:
                 st.markdown(f"<div style='font-size:11px; color:#1e40af; font-weight:700; margin-top:6px;'>• {s}</div>", unsafe_allow_html=True)
         else:
             st.markdown("<div class='status-badge badge-bull'>⚪ NORMAL TRADING CONDITIONS</div>", unsafe_allow_html=True)
-            st.markdown("<div style='font-size:12px; color:#64748b; margin-top:8px;'>No extreme oversold conditions or violent momentum ignition thrusts in play.</div>", unsafe_allow_html=True)
+            st.markdown("<div style='font-size:12px; color:#64748b; margin-top:8px;'>No extreme panic, capitulation, or violent institutional buy thrusts happening right now.</div>", unsafe_allow_html=True)
             
         st.markdown("<hr style='margin:10px 0px;'>", unsafe_allow_html=True)
         trin_col = "#dc2626" if trin >= 2.0 else ("#16a34a" if trin <= 0.8 else "#475569")
@@ -474,7 +484,7 @@ with st.container(border=True):
         """, unsafe_allow_html=True)
 
     with bot_c2:
-        t3_tab1, t3_tab2 = st.tabs(["Momentum Thrusts & Net High-Lows", "TRIN (Capitulation Index)"])
+        t3_tab1, t3_tab2 = st.tabs(["Momentum Thrusts & Net High-Lows", "TRIN (Panic Index)"])
         with t3_tab1:
             fig_thrust = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08)
             # 3-Day Thrust Bars
@@ -483,26 +493,30 @@ with st.container(border=True):
             fig_thrust.add_hline(y=500, line_dash="dash", line_color="#3b82f6", row=1, col=1) # Thrust threshold line
             # Net High-Lows
             fig_thrust.add_trace(go.Bar(x=df_view['Date'], y=df_view['Net_52W_High_Low'], name='Net 52W HL', marker_color=['#22c55e' if x>=0 else '#ef4444' for x in df_view['Net_52W_High_Low']]), row=2, col=1)
-            fig_thrust.update_layout(height=260, margin=dict(l=5, r=5, t=5, b=5), barmode='relative', showlegend=False, hovermode="x unified")
-            fig_thrust.update_yaxes(gridcolor='#f1f5f9')
+            fig_thrust.update_layout(height=240, margin=dict(l=5, r=5, t=5, b=5), barmode='relative', showlegend=False, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white")
+            fig_thrust.update_xaxes(showgrid=False)
+            fig_thrust.update_yaxes(showgrid=True, gridcolor='#f1f5f9')
             st.plotly_chart(fig_thrust, use_container_width=True)
+            st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Top chart shows explosive short-term momentum (Breadth Thrusts). Bottom shows Net 52W Highs.</div>", unsafe_allow_html=True)
+            
         with t3_tab2:
             fig_trin = go.Figure()
             if 'TRIN' in df_view.columns:
-                # Cap TRIN visually at 4.0 for readability if there are extreme outliers
                 capped_trin = df_view['TRIN'].clip(upper=4.0)
                 colors_trin = ['#ef4444' if val >= 2.0 else ('#22c55e' if val <= 0.8 else '#cbd5e1') for val in capped_trin]
                 fig_trin.add_trace(go.Bar(x=df_view['Date'], y=capped_trin, name='TRIN', marker_color=colors_trin))
                 fig_trin.add_hline(y=2.0, line_dash="dash", line_color="#ef4444", annotation_text="Panic (> 2.0)", annotation_position="top left")
                 fig_trin.add_hline(y=1.0, line_dash="solid", line_color="#94a3b8")
-            fig_trin.update_layout(height=260, margin=dict(l=5, r=5, t=5, b=5), hovermode="x unified", showlegend=False)
-            fig_trin.update_yaxes(gridcolor='#f1f5f9')
+            fig_trin.update_layout(height=240, margin=dict(l=5, r=5, t=5, b=5), hovermode="x unified", showlegend=False, plot_bgcolor="white", paper_bgcolor="white")
+            fig_trin.update_xaxes(showgrid=False)
+            fig_trin.update_yaxes(showgrid=True, gridcolor='#f1f5f9')
             st.plotly_chart(fig_trin, use_container_width=True)
+            st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> A TRIN reading above 2.0 means extreme panic selling is happening. Bottoms form on maximum fear.</div>", unsafe_allow_html=True)
 
 # ==============================================================================
 # DRILL-DOWN STOCK INSPECTOR
 # ==============================================================================
-st.markdown("<br><div class='panel-header'>🔍 NIFTY 2450 CONSTITUENT DRILL-DOWN INSPECTOR</div>", unsafe_allow_html=True)
+st.markdown("<br><div class='panel-header'>🔍 BROAD MARKET DRILL-DOWN INSPECTOR</div>", unsafe_allow_html=True)
 
 @st.cache_data(ttl=300)
 def get_drilldown_data(target_date):
@@ -568,7 +582,7 @@ if not drill_data.empty:
         st.write(f"**Found {len(res)} matching stocks** for {actual_date_str}:")
         st.dataframe(res, use_container_width=True, height=350)
     else:
-        st.info("👆 Select one or more parameters above to filter the stock list.")
+        st.info("👆 Select one or more parameters above to screen individual stocks.")
 else:
     st.info("💡 Deep dive list requires 'nse_6yr_historical.parquet' in repository.")
 
