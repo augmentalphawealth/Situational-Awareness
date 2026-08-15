@@ -1,0 +1,11 @@
+Metric,Value
+Completed breakout trades,71280
+Overall 15% before 7% success rate (%),26.46745230078563
+Overall 7% stop before 15% rate (%),46.75925925925926
+Overall average rule-based return (%),1.3721098526794204
+Available breadth features,0
+Usable breadth features,0
+Breadth merge coverage (%),0
+Best walk-forward model,No valid model
+Best model features,
+Best model score threshold,

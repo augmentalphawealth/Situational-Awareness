@@ -1,0 +1,11 @@
+Item,Value
+Price parquet rows,2518235
+Breadth CSV rows,1351
+Completed breakout trade records,71280
+Price data first date,2021-02-23 00:00:00
+Price data last date,2026-08-14 00:00:00
+Breadth data first date,2021-02-23 00:00:00
+Breadth data last date,2026-08-14 00:00:00
+Available breadth features,0
+Usable breadth features after merge,0
+Breadth merge coverage percent,0
