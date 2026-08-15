@@ -1,0 +1,40 @@
+name: Run Breakout Backtest
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-backtest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download repository files
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install required packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pyarrow
+
+      - name: Run isolated breakout backtest
+        run: |
+          python Research/backtest_breakout_regime.py
+
+      - name: Save backtest results into Research folder
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Research/research_breakout_summary.csv
+          git add Research/research_feature_buckets.csv
+          git add Research/research_daily_regime_scorecard.csv
+          git add Research/research_breakout_trades.csv
+          git commit -m "Update breakout backtest results" || echo "No result changes to commit"
+          git push
