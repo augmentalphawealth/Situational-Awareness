@@ -1,653 +1,209 @@
-"""
-BREAKOUT BACKTEST - RESEARCH ONLY
-
-This script reads the two existing data files from the main repository folder:
-    nse_6yr_historical.parquet
-    historical_breadth_regime_6yr.csv
-
-It creates four NEW CSV files inside the Research folder:
-    research_breakout_summary.csv
-    research_feature_buckets.csv
-    research_daily_regime_scorecard.csv
-    research_breakout_trades.csv
-
-It does NOT edit your dashboard, analyzer, parquet, or live breadth files.
-
-YOUR CORE TRADE RULE TESTED HERE:
-- Entry: Existing VCP-style breakout definition
-- Tightness: ATR14 / Close below 4%
-- Stop-loss: Maximum 7%
-- Minimum target: 15%
-- Maximum holding time: 30 trading days
-"""
-
 from pathlib import Path
+from itertools import product
 import numpy as np
 import pandas as pd
 
-
-# ============================================================
-# SETTINGS - YOUR TRADING RULES
-# ============================================================
-
-# Keep the existing VCP breakout/tightness definition at 4%.
-VCP_TIGHTNESS_LIMIT = 0.04
-
-# Your maximum acceptable stop-loss.
-STOP_LOSS_PCT = 7.0
-
-# Your minimum acceptable profit target.
-MINIMUM_TARGET_PCT = 15.0
-
-# Your maximum holding period in trading days.
-MAX_HOLDING_DAYS = 30
-
-# Extra milestones recorded for analysis.
-EXTRA_TARGETS = [18.0, 25.0, 30.0]
-
-
-# ============================================================
-# FILE LOCATIONS
-# ============================================================
-
-# This script is inside the Research folder.
-# parent means "go one level up to the main repo folder".
-RESEARCH_FOLDER = Path(__file__).resolve().parent
-REPO_FOLDER = RESEARCH_FOLDER.parent
-
-PARQUET_FILE = REPO_FOLDER / "nse_6yr_historical.parquet"
-BREADTH_FILE = REPO_FOLDER / "historical_breadth_regime_6yr.csv"
-
-OUTPUT_SUMMARY = RESEARCH_FOLDER / "research_breakout_summary.csv"
-OUTPUT_BUCKETS = RESEARCH_FOLDER / "research_feature_buckets.csv"
-OUTPUT_DAILY = RESEARCH_FOLDER / "research_daily_regime_scorecard.csv"
-OUTPUT_TRADES = RESEARCH_FOLDER / "research_breakout_trades.csv"
-
-
-# ============================================================
-# HELPER FUNCTION
-# ============================================================
-
-def first_hit_day(future_data, entry_price, target_percent, stop_percent):
-    """
-    Checks each future trading day in sequence.
-
-    Returns:
-    - SUCCESS if target is reached before stop
-    - STOPPED_OUT if stop is reached before target
-    - NO_DECISION if neither is hit during the maximum holding period
-    """
-
-    target_price = entry_price * (1 + target_percent / 100)
-    stop_price = entry_price * (1 - stop_percent / 100)
-
-    for day_number, (_, day) in enumerate(future_data.iterrows(), start=1):
-        hit_target = float(day["High"]) >= target_price
-        hit_stop = float(day["Low"]) <= stop_price
-
-        # Daily OHLC data cannot prove the intraday order if BOTH occur.
-        # Mark these rare cases separately instead of pretending to know.
-        if hit_target and hit_stop:
-            return "TARGET_AND_STOP_SAME_DAY", day_number
-
-        if hit_target:
-            return "SUCCESS", day_number
-
-        if hit_stop:
-            return "STOPPED_OUT", day_number
-
-    return "NO_DECISION", np.nan
-
-
-# ============================================================
-# START
-# ============================================================
-
-print("=" * 72)
-print("BREAKOUT BACKTEST - RESEARCH ONLY")
-print("=" * 72)
-print(f"VCP tightness filter: ATR14 / Close < {VCP_TIGHTNESS_LIMIT * 100:.0f}%")
-print(f"Core trade rule: +{MINIMUM_TARGET_PCT:.0f}% before -{STOP_LOSS_PCT:.0f}%")
-print(f"Maximum holding period: {MAX_HOLDING_DAYS} trading days")
-print()
-
-if not PARQUET_FILE.exists():
-    raise FileNotFoundError(
-        f"Cannot find: {PARQUET_FILE.name}\n"
-        "It must be in the main repository folder."
-    )
-
-if not BREADTH_FILE.exists():
-    raise FileNotFoundError(
-        f"Cannot find: {BREADTH_FILE.name}\n"
-        "It must be in the main repository folder."
-    )
-
-
-# ============================================================
-# LOAD DATA
-# ============================================================
-
-print("Step 1 of 6: Loading data files...")
-
-prices = pd.read_parquet(PARQUET_FILE)
-breadth = pd.read_csv(BREADTH_FILE)
-
-prices["Date"] = pd.to_datetime(prices["Date"])
-breadth["Date"] = pd.to_datetime(breadth["Date"])
-
-required_columns = {"Date", "Symbol", "Open", "High", "Low", "Close", "Volume"}
-missing_columns = required_columns - set(prices.columns)
-
-if missing_columns:
-    raise ValueError(
-        "The parquet file is missing these columns: "
-        + ", ".join(sorted(missing_columns))
-    )
-
-prices = prices.sort_values(["Symbol", "Date"]).reset_index(drop=True)
-breadth = breadth.sort_values("Date").drop_duplicates("Date").reset_index(drop=True)
-
-print(f"Loaded {len(prices):,} stock-day records.")
-print(f"Loaded {len(breadth):,} breadth-day records.")
-print()
-
-
-# ============================================================
-# REBUILD VCP BREAKOUT LOGIC
-# ============================================================
-
-print("Step 2 of 6: Identifying VCP-style breakout entries...")
-
-prices["PrevClose"] = prices.groupby("Symbol")["Close"].shift(1)
-
-prices["TR"] = np.maximum(
-    prices["High"] - prices["Low"],
-    np.maximum(
-        (prices["High"] - prices["PrevClose"]).abs(),
-        (prices["Low"] - prices["PrevClose"]).abs(),
-    ),
-)
-
-prices["ATR14"] = prices.groupby("Symbol")["TR"].transform(
-    lambda series: series.rolling(window=14, min_periods=5).mean()
-)
-
-prices["Volume20DAvg"] = prices.groupby("Symbol")["Volume"].transform(
-    lambda series: series.rolling(window=20, min_periods=5).mean()
-)
-
-prices["Close20DHigh"] = prices.groupby("Symbol")["Close"].transform(
-    lambda series: series.rolling(window=20, min_periods=20).max()
-)
-
-prices["VCPTightness"] = (
-    prices["ATR14"] / prices["Close"]
-) < VCP_TIGHTNESS_LIMIT
-
-prices["VolumeSurge"] = prices["Volume"] > (
-    prices["Volume20DAvg"] * 1.5
-)
-
-prices["PreviousDayTight"] = prices.groupby("Symbol")[
-    "VCPTightness"
-].shift(1)
-
-prices["IsBreakout"] = (
-    (prices["Close"] >= prices["Close20DHigh"])
-    & prices["VolumeSurge"]
-    & prices["PreviousDayTight"].fillna(False)
-)
-
-print(f"Breakout entries found: {int(prices['IsBreakout'].sum()):,}")
-print()
-
-
-# ============================================================
-# FORWARD TRADE OUTCOMES
-# ============================================================
-
-print("Step 3 of 6: Testing 15% target before 7% stop...")
-
-trade_records = []
-
-for symbol, stock_data in prices.groupby("Symbol", sort=False):
-    stock_data = stock_data.sort_values("Date").reset_index(drop=True)
-
-    breakout_indexes = stock_data.index[
-        stock_data["IsBreakout"]
-    ].tolist()
-
-    for entry_index in breakout_indexes:
-        entry = stock_data.iloc[entry_index]
-
-        future = stock_data.iloc[
-            entry_index + 1 : entry_index + 1 + MAX_HOLDING_DAYS
-        ].copy()
-
-        # Skip entries without enough future data.
-        if len(future) < MAX_HOLDING_DAYS:
-            continue
-
-        entry_price = float(entry["Close"])
-        stop_price = entry_price * (1 - STOP_LOSS_PCT / 100)
-        target_15_price = entry_price * (
-            1 + MINIMUM_TARGET_PCT / 100
-        )
-
-        core_result, core_day = first_hit_day(
-            future_data=future,
-            entry_price=entry_price,
-            target_percent=MINIMUM_TARGET_PCT,
-            stop_percent=STOP_LOSS_PCT,
-        )
-
-        future_10 = stock_data.iloc[entry_index + 10]
-        future_20 = stock_data.iloc[entry_index + 20]
-        future_30 = stock_data.iloc[entry_index + 30]
-
-        max_high = float(future["High"].max())
-        min_low = float(future["Low"].min())
-
-        record = {
-            "Date": entry["Date"],
-            "Symbol": symbol,
-            "EntryPrice": entry_price,
-            "StopPrice7Pct": stop_price,
-            "TargetPrice15Pct": target_15_price,
-            "ForwardReturn10D": (
-                float(future_10["Close"]) / entry_price - 1
-            ) * 100,
-            "ForwardReturn20D": (
-                float(future_20["Close"]) / entry_price - 1
-            ) * 100,
-            "ForwardReturn30D": (
-                float(future_30["Close"]) / entry_price - 1
-            ) * 100,
-            "MaxFavorableMove30D": (
-                max_high / entry_price - 1
-            ) * 100,
-            "MaxAdverseMove30D": (
-                min_low / entry_price - 1
-            ) * 100,
-            "CoreResult15Before7": core_result,
-            "CoreDecisionDay": core_day,
-        }
-
-        # Record whether 18%, 25% and 30% were hit before the 7% stop.
-        for extra_target in EXTRA_TARGETS:
-            extra_result, extra_day = first_hit_day(
-                future_data=future,
-                entry_price=entry_price,
-                target_percent=extra_target,
-                stop_percent=STOP_LOSS_PCT,
-            )
-
-            target_label = str(int(extra_target))
-            record[f"Target{target_label}BeforeStop7"] = extra_result
-            record[f"Target{target_label}DecisionDay"] = extra_day
-
-        # Rule-based return for the primary 15% / 7% test.
-        if core_result == "SUCCESS":
-            record["RuleBasedReturn15Before7"] = MINIMUM_TARGET_PCT
-        elif core_result == "STOPPED_OUT":
-            record["RuleBasedReturn15Before7"] = -STOP_LOSS_PCT
-        else:
-            record["RuleBasedReturn15Before7"] = (
-                float(future.iloc[-1]["Close"]) / entry_price - 1
-            ) * 100
-
-        trade_records.append(record)
-
-trades = pd.DataFrame(trade_records)
-
-if trades.empty:
-    raise ValueError(
-        "No fully completed 30-trading-day breakout records were found."
-    )
-
-print(f"Completed trade records available: {len(trades):,}")
-print()
-
-
-# ============================================================
-# ADD SAME-DAY BREADTH DATA
-# ============================================================
-
-print("Step 4 of 6: Adding market-breadth conditions...")
-
-candidate_breadth_columns = [
-    "Date",
-    "PctAbove20EMA",
-    "PctAbove50EMA",
-    "PctAbove200EMA",
-    "Slope20EMA",
-    "Slope50EMA",
-    "Slope200EMA",
-    "VolumeRatio",
-    "Net52WHighLow",
-    "Rolling3DUp4",
-    "Rolling3DDown4",
-    "Up251MCount",
-    "Down251MCount",
-    "T3Breakouts",
-    "T3Wins",
-    "LargePct20EMA",
-    "LargePct50EMA",
-    "LargePct200EMA",
-    "MidPct20EMA",
-    "MidPct50EMA",
-    "MidPct200EMA",
-    "SmallPct20EMA",
-    "SmallPct50EMA",
-    "SmallPct200EMA",
-    "MicroPct20EMA",
-    "MicroPct50EMA",
-    "MicroPct200EMA",
-]
-
-available_columns = [
-    column
-    for column in candidate_breadth_columns
-    if column in breadth.columns
-]
-
-breadth_for_merge = breadth[available_columns].copy()
-
-if (
-    "T3Breakouts" in breadth_for_merge.columns
-    and "T3Wins" in breadth_for_merge.columns
-):
-    breadth_for_merge["FollowThroughRate"] = np.where(
-        breadth_for_merge["T3Breakouts"] > 0,
-        breadth_for_merge["T3Wins"]
-        / breadth_for_merge["T3Breakouts"]
-        * 100,
-        np.nan,
-    )
-
-trades = trades.merge(breadth_for_merge, on="Date", how="left")
-
-
-# ============================================================
-# CREATE OVERALL SUMMARY
-# ============================================================
-
-print("Step 5 of 6: Creating summary and feature tests...")
-
-core_success = trades["CoreResult15Before7"] == "SUCCESS"
-core_stop = trades["CoreResult15Before7"] == "STOPPED_OUT"
-core_same_day = (
-    trades["CoreResult15Before7"] == "TARGET_AND_STOP_SAME_DAY"
-)
-core_neither = trades["CoreResult15Before7"] == "NO_DECISION"
-
-summary_rows = [
-    {
-        "Metric": "Completed breakout trades tested",
-        "Value": len(trades),
-    },
-    {
-        "Metric": "15% target before 7% stop (%)",
-        "Value": core_success.mean() * 100,
-    },
-    {
-        "Metric": "7% stop before 15% target (%)",
-        "Value": core_stop.mean() * 100,
-    },
-    {
-        "Metric": "15% target and 7% stop same day (%)",
-        "Value": core_same_day.mean() * 100,
-    },
-    {
-        "Metric": "Neither 15% target nor 7% stop in 30 days (%)",
-        "Value": core_neither.mean() * 100,
-    },
-    {
-        "Metric": "18% target before 7% stop (%)",
-        "Value": (
-            trades["Target18BeforeStop7"] == "SUCCESS"
-        ).mean() * 100,
-    },
-    {
-        "Metric": "25% target before 7% stop (%)",
-        "Value": (
-            trades["Target25BeforeStop7"] == "SUCCESS"
-        ).mean() * 100,
-    },
-    {
-        "Metric": "30% target before 7% stop (%)",
-        "Value": (
-            trades["Target30BeforeStop7"] == "SUCCESS"
-        ).mean() * 100,
-    },
-    {
-        "Metric": "Average 10-day close-to-close return (%)",
-        "Value": trades["ForwardReturn10D"].mean(),
-    },
-    {
-        "Metric": "Median 10-day close-to-close return (%)",
-        "Value": trades["ForwardReturn10D"].median(),
-    },
-    {
-        "Metric": "Average 20-day close-to-close return (%)",
-        "Value": trades["ForwardReturn20D"].mean(),
-    },
-    {
-        "Metric": "Median 20-day close-to-close return (%)",
-        "Value": trades["ForwardReturn20D"].median(),
-    },
-    {
-        "Metric": "Average 30-day close-to-close return (%)",
-        "Value": trades["ForwardReturn30D"].mean(),
-    },
-    {
-        "Metric": "Average rule-based return: 15% before 7% (%)",
-        "Value": trades["RuleBasedReturn15Before7"].mean(),
-    },
-]
-
-summary = pd.DataFrame(summary_rows)
-summary["Value"] = summary["Value"].round(3)
-summary.to_csv(OUTPUT_SUMMARY, index=False)
-
-
-# ============================================================
-# FEATURE-BUCKET TESTS
-# ============================================================
-
-features_to_test = [
-    "PctAbove20EMA",
-    "PctAbove50EMA",
-    "PctAbove200EMA",
-    "Slope20EMA",
-    "Slope50EMA",
-    "Slope200EMA",
-    "VolumeRatio",
-    "Net52WHighLow",
-    "Rolling3DUp4",
-    "Rolling3DDown4",
-    "Up251MCount",
-    "Down251MCount",
+ROOT = Path(__file__).resolve().parent.parent
+OUT = Path(__file__).resolve().parent
+PARQUET = ROOT / "nse_6yr_historical.parquet"
+BREADTH = ROOT / "historical_breadth_regime_6yr.csv"
+
+# Trading objective
+TIGHTNESS_LIMIT = 0.04
+STOP_PCT = 7.0
+TARGET_PCT = 15.0
+MAX_DAYS = 30
+MIN_TRAIN_TRADES = 300
+MIN_BUCKET_TRADES = 100
+
+FEATURES = [
+    "PctAbove20EMA", "PctAbove50EMA", "PctAbove200EMA",
+    "Slope20EMA", "Slope50EMA", "Slope200EMA",
+    "VolumeRatio", "Net52WHighLow",
+    "Rolling3DUp4", "Rolling3DDown4",
+    "Up251MCount", "Down251MCount",
     "FollowThroughRate",
-    "LargePct20EMA",
-    "LargePct50EMA",
-    "LargePct200EMA",
-    "MidPct20EMA",
-    "MidPct50EMA",
-    "MidPct200EMA",
-    "SmallPct20EMA",
-    "SmallPct50EMA",
-    "SmallPct200EMA",
-    "MicroPct20EMA",
-    "MicroPct50EMA",
-    "MicroPct200EMA",
+    "LargePct20EMA", "LargePct50EMA", "LargePct200EMA",
+    "MidPct20EMA", "MidPct50EMA", "MidPct200EMA",
+    "SmallPct20EMA", "SmallPct50EMA", "SmallPct200EMA",
+    "MicroPct20EMA", "MicroPct50EMA", "MicroPct200EMA",
 ]
 
-bucket_rows = []
+# Candidate mixes. The script will also search many data-driven combinations.
+MIXES = {
+    "equal_core": {"PctAbove20EMA": .25, "PctAbove50EMA": .25, "PctAbove200EMA": .10, "VolumeRatio": .15, "Net52WHighLow": .10, "FollowThroughRate": .15},
+    "leadership": {"PctAbove20EMA": .30, "PctAbove50EMA": .30, "PctAbove200EMA": .10, "VolumeRatio": .10, "Net52WHighLow": .10, "FollowThroughRate": .10},
+    "followthrough": {"PctAbove20EMA": .20, "PctAbove50EMA": .20, "PctAbove200EMA": .10, "VolumeRatio": .10, "Net52WHighLow": .10, "FollowThroughRate": .30},
+    "participation": {"PctAbove20EMA": .20, "PctAbove50EMA": .15, "PctAbove200EMA": .05, "VolumeRatio": .25, "Net52WHighLow": .15, "FollowThroughRate": .20},
+}
 
-for feature in features_to_test:
-    if feature not in trades.columns:
-        continue
 
-    valid_data = trades.dropna(subset=[feature]).copy()
+def percentile_score(s):
+    return s.rank(pct=True, method="average") * 100
 
-    if len(valid_data) < 30:
-        continue
 
-    try:
-        valid_data["Bucket"] = pd.qcut(
-            valid_data[feature].rank(method="first"),
-            q=3,
-            labels=["Low", "Medium", "High"],
-        )
-    except ValueError:
-        continue
+def first_hit(future, entry, target=TARGET_PCT, stop=STOP_PCT):
+    tp, sl = entry * (1 + target/100), entry * (1 - stop/100)
+    for day, (_, r) in enumerate(future.iterrows(), 1):
+        hit_t = float(r.High) >= tp
+        hit_s = float(r.Low) <= sl
+        if hit_t and hit_s: return "AMBIGUOUS", day
+        if hit_t: return "SUCCESS", day
+        if hit_s: return "STOP", day
+    return "TIMEOUT", np.nan
 
-    for bucket_name, group in valid_data.groupby(
-        "Bucket", observed=False
-    ):
-        bucket_rows.append(
-            {
-                "Feature": feature,
-                "Bucket": str(bucket_name),
-                "BreakoutTrades": len(group),
-                "Target15BeforeStop7Pct": (
-                    group["CoreResult15Before7"] == "SUCCESS"
-                ).mean()
-                * 100,
-                "Stop7BeforeTarget15Pct": (
-                    group["CoreResult15Before7"] == "STOPPED_OUT"
-                ).mean()
-                * 100,
-                "Target18BeforeStop7Pct": (
-                    group["Target18BeforeStop7"] == "SUCCESS"
-                ).mean()
-                * 100,
-                "Target25BeforeStop7Pct": (
-                    group["Target25BeforeStop7"] == "SUCCESS"
-                ).mean()
-                * 100,
-                "Target30BeforeStop7Pct": (
-                    group["Target30BeforeStop7"] == "SUCCESS"
-                ).mean()
-                * 100,
-                "Average10DayReturnPct": group[
-                    "ForwardReturn10D"
-                ].mean(),
-                "Average20DayReturnPct": group[
-                    "ForwardReturn20D"
-                ].mean(),
-                "AverageRuleBasedReturnPct": group[
-                    "RuleBasedReturn15Before7"
-                ].mean(),
-            }
-        )
 
-buckets = pd.DataFrame(bucket_rows)
+def build_trades(px):
+    rows=[]
+    for sym, g in px.groupby("Symbol", sort=False):
+        g=g.sort_values("Date").reset_index(drop=True)
+        for i in g.index[g.IsBreakout].tolist():
+            fut=g.iloc[i+1:i+1+MAX_DAYS]
+            if len(fut)<MAX_DAYS: continue
+            e=float(g.loc[i,"Close"])
+            result, day=first_hit(fut,e)
+            rec={"Date":g.loc[i,"Date"],"Symbol":sym,"EntryPrice":e,"Result":result,"DecisionDay":day}
+            for t in [15,18,25,30]:
+                rec[f"Target{t}BeforeStop"] = first_hit(fut,e,t,STOP_PCT)[0]
+            for h in [5,10,15,20,30]:
+                rec[f"CloseReturn{h}D"]=(float(g.loc[i+h,"Close"])/e-1)*100
+            rec["RuleReturn"] = TARGET_PCT if result=="SUCCESS" else (-STOP_PCT if result=="STOP" else (float(fut.iloc[-1].Close)/e-1)*100)
+            rows.append(rec)
+    return pd.DataFrame(rows)
 
-if buckets.empty:
-    buckets = pd.DataFrame(
-        columns=[
-            "Feature",
-            "Bucket",
-            "BreakoutTrades",
-            "Target15BeforeStop7Pct",
-            "Stop7BeforeTarget15Pct",
-            "Target18BeforeStop7Pct",
-            "Target25BeforeStop7Pct",
-            "Target30BeforeStop7Pct",
-            "Average10DayReturnPct",
-            "Average20DayReturnPct",
-            "AverageRuleBasedReturnPct",
-        ]
-    )
+
+def add_features(trades, breadth):
+    b=breadth.copy()
+    if {"T3Breakouts","T3Wins"}.issubset(b.columns):
+        b["FollowThroughRate"]=np.where(b.T3Breakouts>0,b.T3Wins/b.T3Breakouts*100,np.nan)
+    usable=["Date"]+[f for f in FEATURES if f in b.columns]
+    b=b[usable].drop_duplicates("Date")
+    return trades.merge(b,on="Date",how="left"), b
+
+
+def make_buckets(trades, features):
+    rows=[]
+    base=(trades.Result=="SUCCESS")
+    for f in features:
+        v=trades.dropna(subset=[f]).copy()
+        if len(v)<MIN_BUCKET_TRADES: continue
+        v["Bucket"]=pd.qcut(v[f].rank(method="first"),3,labels=["Low","Medium","High"])
+        for bucket,g in v.groupby("Bucket",observed=False):
+            rows.append({"Feature":f,"Bucket":str(bucket),"Trades":len(g),"Success15Before7Pct":(g.Result=="SUCCESS").mean()*100,"StopBefore15Pct":(g.Result=="STOP").mean()*100,"Target18Pct":(g.Target18BeforeStop=="SUCCESS").mean()*100,"Target25Pct":(g.Target25BeforeStop=="SUCCESS").mean()*100,"Target30Pct":(g.Target30BeforeStop=="SUCCESS").mean()*100,"Avg10D":g.CloseReturn10D.mean(),"Avg20D":g.CloseReturn20D.mean(),"AvgRuleReturn":g.RuleReturn.mean()})
+    return pd.DataFrame(rows)
+
+
+def score_frame(df, weights):
+    s=pd.Series(0.0,index=df.index); total=0
+    for f,w in weights.items():
+        if f in df.columns:
+            z=percentile_score(df[f].fillna(df[f].median()))
+            # Downside metrics are inverted
+            if f in {"Rolling3DDown4","Down251MCount","MicroPct20EMA","MicroPct50EMA","MicroPct200EMA"}: z=100-z
+            s += z*w; total += w
+    return s/total if total else s
+
+
+def evaluate(d, score_col, threshold):
+    q=d[d[score_col]>=threshold]
+    if len(q)==0: return {"Trades":0,"SuccessPct":np.nan,"RuleReturn":np.nan,"Avg20D":np.nan}
+    return {"Trades":len(q),"SuccessPct":(q.Result=="SUCCESS").mean()*100,"RuleReturn":q.RuleReturn.mean(),"Avg20D":q.CloseReturn20D.mean()}
+
+print("Loading inputs...")
+if not PARQUET.exists(): raise FileNotFoundError(PARQUET)
+if not BREADTH.exists(): raise FileNotFoundError(BREADTH)
+px=pd.read_parquet(PARQUET); b=pd.read_csv(BREADTH)
+px.Date=pd.to_datetime(px.Date); b.Date=pd.to_datetime(b.Date)
+px=px.sort_values(["Symbol","Date"]).reset_index(drop=True)
+px["PrevClose"]=px.groupby("Symbol").Close.shift(1)
+px["TR"]=np.maximum(px.High-px.Low,np.maximum((px.High-px.PrevClose).abs(),(px.Low-px.PrevClose).abs()))
+px["ATR14"]=px.groupby("Symbol").TR.transform(lambda x:x.rolling(14,min_periods=5).mean())
+px["Vol20"]=px.groupby("Symbol").Volume.transform(lambda x:x.rolling(20,min_periods=5).mean())
+px["High20"]=px.groupby("Symbol").Close.transform(lambda x:x.rolling(20,min_periods=20).max())
+px["Tight"]=(px.ATR14/px.Close)<TIGHTNESS_LIMIT
+px["Breakout"]=(px.Close>=px.High20)&(px.Volume>px.Vol20*1.5)&px.groupby("Symbol").Tight.shift(1).fillna(False)
+px["IsBreakout"]=px.Breakout
+tr=build_trades(px)
+tr,bmerge=add_features(tr,b)
+
+# Audit and raw outputs
+audit=pd.DataFrame([{"Input":"parquet","Rows":len(px),"MinDate":px.Date.min(),"MaxDate":px.Date.max()},{"Input":"breadth","Rows":len(b),"MinDate":b.Date.min(),"MaxDate":b.Date.max()},{"Input":"trade records","Rows":len(tr),"MinDate":tr.Date.min(),"MaxDate":tr.Date.max()}])
+audit["BreadthMergeCoveragePct"]=np.nan
+audit.to_csv(OUT/"research_input_audit.csv",index=False)
+tr.to_csv(OUT/"research_breakout_trades_enriched.csv",index=False)
+
+usable=[f for f in FEATURES if f in tr.columns and tr[f].notna().sum()>=MIN_BUCKET_TRADES]
+buckets=make_buckets(tr,usable); buckets.to_csv(OUT/"research_feature_buckets.csv",index=False)
+
+# Feature rankings from full data, but model selection uses walk-forward below.
+rank=[]
+for f in usable:
+    x=tr.dropna(subset=[f]).copy(); x["bin"]=pd.qcut(x[f].rank(method="first"),3,labels=False)
+    low=x[x.bin==0]; high=x[x.bin==2]
+    rank.append({"Feature":f,"Trades":len(x),"HighSuccessPct":(high.Result=="SUCCESS").mean()*100,"LowSuccessPct":(low.Result=="SUCCESS").mean()*100,"LiftPct":(high.Result=="SUCCESS").mean()*100-(low.Result=="SUCCESS").mean()*100,"HighRuleReturn":high.RuleReturn.mean(),"LowRuleReturn":low.RuleReturn.mean()})
+pd.DataFrame(rank).sort_values("LiftPct",ascending=False).to_csv(OUT/"research_feature_rankings.csv",index=False)
+
+# Daily, point-in-time feature scores; score at date t uses only values on date t.
+daily=tr.groupby("Date").agg(Trades=("Symbol","count"),SuccessPct=("Result",lambda x:(x=="SUCCESS").mean()*100),RuleReturn=("RuleReturn","mean"),Avg20D=("CloseReturn20D","mean")).reset_index()
+for f in usable:
+    vals=bmerge[["Date",f]].drop_duplicates("Date").sort_values("Date")
+    vals[f+"_Score"]=percentile_score(vals[f])
+    daily=daily.merge(vals[["Date",f+"_Score"]],on="Date",how="left")
+
+# Mixes plus top feature combinations. We use only features with positive high-v-low lift.
+for name,w in list(MIXES.items()):
+    MIXES[name]={f:v for f,v in w.items() if f in usable}
+positive=[r["Feature"] for r in sorted(rank,key=lambda z:z["LiftPct"],reverse=True) if r["LiftPct"]>0]
+for k in [3,4,5,6]:
+    for combo in list(product(positive[:8],repeat=0)):
+        pass
+    from itertools import combinations
+    for combo in combinations(positive[:8],k):
+        name="data_"+"_".join(combo)
+        MIXES[name]={f:1/len(combo) for f in combo}
+
+score_rows=[]
+# Walk-forward: train first 60%, test remaining 40%, with chronological quarterly folds.
+tr=tr.sort_values("Date").reset_index(drop=True)
+cut_dates=pd.Series(tr.Date.drop_duplicates().sort_values().unique())
+folds=[]
+for q in range(4, len(cut_dates), max(1,len(cut_dates)//8)):
+    train_end=cut_dates.iloc[q-1]
+    test_end=cut_dates.iloc[min(q+max(1,len(cut_dates)//8)-1,len(cut_dates)-1)]
+    folds.append((train_end,test_end))
+if not folds: folds=[(cut_dates.iloc[int(len(cut_dates)*.6)],cut_dates.iloc[-1])]
+
+for name,w in MIXES.items():
+    tr["Score"]=score_frame(tr,w)
+    for threshold in [50,60,65,70,75,80]:
+        for fold,(train_end,test_end) in enumerate(folds,1):
+            train=tr[tr.Date<=train_end]; test=tr[(tr.Date>train_end)&(tr.Date<=test_end)]
+            if len(train)<MIN_TRAIN_TRADES or len(test)<50: continue
+            r=evaluate(test,"Score",threshold)
+            score_rows.append({"Model":name,"Threshold":threshold,"Fold":fold,"TrainEnd":train_end,"TestEnd":test_end,**r})
+
+scores=pd.DataFrame(score_rows)
+if not scores.empty:
+    scores.to_csv(OUT/"research_walkforward_results.csv",index=False)
+    model_summary=scores.groupby(["Model","Threshold"]).agg(Folds=("Fold","count"),TestTrades=("Trades","sum"),MeanSuccessPct=("SuccessPct","mean"),MeanRuleReturn=("RuleReturn","mean"),Mean20D=("Avg20D","mean")).reset_index()
+    model_summary["ScoreQuality"]=model_summary["MeanRuleReturn"]+0.05*model_summary["MeanSuccessPct"]
+    model_summary.sort_values("ScoreQuality",ascending=False).to_csv(OUT/"research_candidate_scores.csv",index=False)
+    best=model_summary.sort_values("ScoreQuality",ascending=False).iloc[0]
+    best_model,best_threshold=best.Model,int(best.Threshold)
 else:
-    numeric_columns = [
-        "Target15BeforeStop7Pct",
-        "Stop7BeforeTarget15Pct",
-        "Target18BeforeStop7Pct",
-        "Target25BeforeStop7Pct",
-        "Target30BeforeStop7Pct",
-        "Average10DayReturnPct",
-        "Average20DayReturnPct",
-        "AverageRuleBasedReturnPct",
-    ]
+    best_model,best_threshold="equal_core",60
+    pd.DataFrame().to_csv(OUT/"research_walkforward_results.csv",index=False)
 
-    buckets[numeric_columns] = buckets[numeric_columns].round(3)
-    buckets = buckets.sort_values(["Feature", "Bucket"])
+best_weights=MIXES.get(best_model,MIXES["equal_core"])
+# Rebuild daily score using best weights and attach action zones.
+daily["CompositeScore"]=score_frame(daily,{f:w for f,w in best_weights.items() if f+"_Score" in daily.columns})
+daily["BestModel"]=best_model; daily["RecommendedThreshold"]=best_threshold
+daily["ActionZone"]=pd.cut(daily.CompositeScore,[-1,35,50,65,80,101],labels=["Risk-off","Defensive","Selective","Constructive","Aggressive"])
+daily.to_csv(OUT/"research_best_composite_score_daily.csv",index=False)
 
-buckets.to_csv(OUTPUT_BUCKETS, index=False)
+zones=daily.groupby("ActionZone",observed=False).agg(Days=("Date","count"),Trades=("Trades","sum"),SuccessPct=("SuccessPct","mean"),RuleReturn=("RuleReturn","mean"),Avg20D=("Avg20D","mean")).reset_index()
+zones.to_csv(OUT/"research_score_action_zones.csv",index=False)
 
-
-# ============================================================
-# DAILY REGIME SCORECARD
-# ============================================================
-
-daily_scorecard = (
-    trades.groupby("Date")
-    .agg(
-        BreakoutsThatDay=("Symbol", "count"),
-        Target15BeforeStop7Pct=(
-            "CoreResult15Before7",
-            lambda values: (values == "SUCCESS").mean() * 100,
-        ),
-        Stop7BeforeTarget15Pct=(
-            "CoreResult15Before7",
-            lambda values: (values == "STOPPED_OUT").mean() * 100,
-        ),
-        Target18BeforeStop7Pct=(
-            "Target18BeforeStop7",
-            lambda values: (values == "SUCCESS").mean() * 100,
-        ),
-        Target25BeforeStop7Pct=(
-            "Target25BeforeStop7",
-            lambda values: (values == "SUCCESS").mean() * 100,
-        ),
-        Target30BeforeStop7Pct=(
-            "Target30BeforeStop7",
-            lambda values: (values == "SUCCESS").mean() * 100,
-        ),
-        Average10DayReturnPct=("ForwardReturn10D", "mean"),
-        Average20DayReturnPct=("ForwardReturn20D", "mean"),
-        AverageRuleBasedReturnPct=(
-            "RuleBasedReturn15Before7",
-            "mean",
-        ),
-    )
-    .reset_index()
-)
-
-daily_scorecard = daily_scorecard.merge(
-    breadth_for_merge,
-    on="Date",
-    how="left",
-)
-
-daily_scorecard = daily_scorecard.round(3)
-daily_scorecard.to_csv(OUTPUT_DAILY, index=False)
-
-
-# ============================================================
-# SAVE INDIVIDUAL TRADE RECORDS
-# ============================================================
-
-trades = trades.sort_values(["Date", "Symbol"]).round(3)
-trades.to_csv(OUTPUT_TRADES, index=False)
-
-
-# ============================================================
-# FINISH
-# ============================================================
-
-print()
-print("=" * 72)
-print("BACKTEST COMPLETE")
-print("=" * 72)
-print("Created these new files inside the Research folder:")
-print(f"1. {OUTPUT_SUMMARY.name}")
-print(f"2. {OUTPUT_BUCKETS.name}")
-print(f"3. {OUTPUT_DAILY.name}")
-print(f"4. {OUTPUT_TRADES.name}")
-print()
-print("Your dashboard and existing live data files were not changed.")
+summary=pd.DataFrame([{"Metric":"Breakout records","Value":len(tr)},{"Metric":"Usable features","Value":len(usable)},{"Metric":"Best model","Value":best_model},{"Metric":"Best threshold","Value":best_threshold},{"Metric":"Best model weights","Value":str(best_weights)},{"Metric":"Core success all trades %","Value":(tr.Result=="SUCCESS").mean()*100},{"Metric":"Core average rule return %","Value":tr.RuleReturn.mean()}])
+summary.to_csv(OUT/"research_run_summary.csv",index=False)
+print("DONE. Research files created in Research folder.")
