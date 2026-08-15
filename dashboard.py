@@ -39,7 +39,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- GITHUB STRICT COMMIT FETCHING CONFIGURATION ---
-REPO_OWNER = "capiyushjain"
+REPO_OWNER = "augmentalphawealth"
 REPO_NAME = "Situational-Awareness"
 BRANCH = "main"
 
