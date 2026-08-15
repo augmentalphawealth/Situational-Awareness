@@ -1,26 +1,24 @@
 """
-ISOLATED BREAKOUT BACKTEST
-==========================
+BREAKOUT BACKTEST - RESEARCH ONLY
 
-This script is for RESEARCH ONLY.
+This script reads the two existing data files from the main repository folder:
+    nse_6yr_historical.parquet
+    historical_breadth_regime_6yr.csv
 
-It reads:
-    ../nse_6yr_historical.parquet
-    ../historical_breadth_regime_6yr.csv
-
-It creates NEW output files inside the Research folder:
+It creates four NEW CSV files inside the Research folder:
     research_breakout_summary.csv
     research_feature_buckets.csv
     research_daily_regime_scorecard.csv
     research_breakout_trades.csv
 
-It DOES NOT edit:
-    dashboard.py
-    analyze_6yr_data.py
-    fetch_6yr_history.py
-    fetch_eod_6yr.py
-    nse_6yr_historical.parquet
-    historical_breadth_regime_6yr.csv
+It does NOT edit your dashboard, analyzer, parquet, or live breadth files.
+
+YOUR CORE TRADE RULE TESTED HERE:
+- Entry: Existing VCP-style breakout definition
+- Tightness: ATR14 / Close below 4%
+- Stop-loss: Maximum 7%
+- Minimum target: 15%
+- Maximum holding time: 30 trading days
 """
 
 from pathlib import Path
@@ -29,10 +27,31 @@ import pandas as pd
 
 
 # ============================================================
-# 1. FILE LOCATIONS
+# SETTINGS - YOUR TRADING RULES
 # ============================================================
+
+# Keep the existing VCP breakout/tightness definition at 4%.
+VCP_TIGHTNESS_LIMIT = 0.04
+
+# Your maximum acceptable stop-loss.
+STOP_LOSS_PCT = 7.0
+
+# Your minimum acceptable profit target.
+MINIMUM_TARGET_PCT = 15.0
+
+# Your maximum holding period in trading days.
+MAX_HOLDING_DAYS = 30
+
+# Extra milestones recorded for analysis.
+EXTRA_TARGETS = [18.0, 25.0, 30.0]
+
+
+# ============================================================
+# FILE LOCATIONS
+# ============================================================
+
 # This script is inside the Research folder.
-# ".." means go one folder UP to the main repository folder.
+# parent means "go one level up to the main repo folder".
 RESEARCH_FOLDER = Path(__file__).resolve().parent
 REPO_FOLDER = RESEARCH_FOLDER.parent
 
@@ -46,40 +65,70 @@ OUTPUT_TRADES = RESEARCH_FOLDER / "research_breakout_trades.csv"
 
 
 # ============================================================
-# 2. SETTINGS MATCHED TO YOUR TRADING STYLE
+# HELPER FUNCTION
 # ============================================================
-# Breakout definition:
-# - Close at a 20-day closing high
-# - Volume at least 50% above 20-day average
-# - Previous day had ATR contraction below 4%
 
-STOP_LOSS_PCT = 7.0
-TARGET_PCT = 25.0
-HOLDING_DAYS = 30
+def first_hit_day(future_data, entry_price, target_percent, stop_percent):
+    """
+    Checks each future trading day in sequence.
 
-print("=" * 70)
-print("ISOLATED BREAKOUT BACKTEST")
-print("=" * 70)
-print("This script only reads existing files and writes new research CSVs.")
+    Returns:
+    - SUCCESS if target is reached before stop
+    - STOPPED_OUT if stop is reached before target
+    - NO_DECISION if neither is hit during the maximum holding period
+    """
+
+    target_price = entry_price * (1 + target_percent / 100)
+    stop_price = entry_price * (1 - stop_percent / 100)
+
+    for day_number, (_, day) in enumerate(future_data.iterrows(), start=1):
+        hit_target = float(day["High"]) >= target_price
+        hit_stop = float(day["Low"]) <= stop_price
+
+        # Daily OHLC data cannot prove the intraday order if BOTH occur.
+        # Mark these rare cases separately instead of pretending to know.
+        if hit_target and hit_stop:
+            return "TARGET_AND_STOP_SAME_DAY", day_number
+
+        if hit_target:
+            return "SUCCESS", day_number
+
+        if hit_stop:
+            return "STOPPED_OUT", day_number
+
+    return "NO_DECISION", np.nan
+
+
+# ============================================================
+# START
+# ============================================================
+
+print("=" * 72)
+print("BREAKOUT BACKTEST - RESEARCH ONLY")
+print("=" * 72)
+print(f"VCP tightness filter: ATR14 / Close < {VCP_TIGHTNESS_LIMIT * 100:.0f}%")
+print(f"Core trade rule: +{MINIMUM_TARGET_PCT:.0f}% before -{STOP_LOSS_PCT:.0f}%")
+print(f"Maximum holding period: {MAX_HOLDING_DAYS} trading days")
 print()
 
 if not PARQUET_FILE.exists():
     raise FileNotFoundError(
-        f"Parquet file was not found: {PARQUET_FILE}\n"
-        "Check that nse_6yr_historical.parquet exists in the main repo folder."
+        f"Cannot find: {PARQUET_FILE.name}\n"
+        "It must be in the main repository folder."
     )
 
 if not BREADTH_FILE.exists():
     raise FileNotFoundError(
-        f"Breadth CSV was not found: {BREADTH_FILE}\n"
-        "Check that historical_breadth_regime_6yr.csv exists in the main repo folder."
+        f"Cannot find: {BREADTH_FILE.name}\n"
+        "It must be in the main repository folder."
     )
 
 
 # ============================================================
-# 3. LOAD DATA
+# LOAD DATA
 # ============================================================
-print("Step 1 of 6: Loading parquet and breadth CSV...")
+
+print("Step 1 of 6: Loading data files...")
 
 prices = pd.read_parquet(PARQUET_FILE)
 breadth = pd.read_csv(BREADTH_FILE)
@@ -87,13 +136,13 @@ breadth = pd.read_csv(BREADTH_FILE)
 prices["Date"] = pd.to_datetime(prices["Date"])
 breadth["Date"] = pd.to_datetime(breadth["Date"])
 
-required_price_columns = {"Date", "Symbol", "Open", "High", "Low", "Close", "Volume"}
-missing_price_columns = required_price_columns - set(prices.columns)
+required_columns = {"Date", "Symbol", "Open", "High", "Low", "Close", "Volume"}
+missing_columns = required_columns - set(prices.columns)
 
-if missing_price_columns:
+if missing_columns:
     raise ValueError(
-        "Parquet is missing required columns: "
-        + ", ".join(sorted(missing_price_columns))
+        "The parquet file is missing these columns: "
+        + ", ".join(sorted(missing_columns))
     )
 
 prices = prices.sort_values(["Symbol", "Date"]).reset_index(drop=True)
@@ -105,15 +154,10 @@ print()
 
 
 # ============================================================
-# 4. REBUILD EXISTING BREAKOUT LOGIC
+# REBUILD VCP BREAKOUT LOGIC
 # ============================================================
-# This intentionally matches your current analyzer logic:
-# ATR14 / Close < 4%
-# Volume > 1.5 × 20-day average volume
-# Close >= 20-day closing high
-# Previous day was tight
 
-print("Step 2 of 6: Rebuilding your current VCP breakout definition...")
+print("Step 2 of 6: Identifying VCP-style breakout entries...")
 
 prices["PrevClose"] = prices.groupby("Symbol")["Close"].shift(1)
 
@@ -137,9 +181,17 @@ prices["Close20DHigh"] = prices.groupby("Symbol")["Close"].transform(
     lambda series: series.rolling(window=20, min_periods=20).max()
 )
 
-prices["VCPTightness"] = (prices["ATR14"] / prices["Close"]) < 0.04
-prices["VolumeSurge"] = prices["Volume"] > (prices["Volume20DAvg"] * 1.5)
-prices["PreviousDayTight"] = prices.groupby("Symbol")["VCPTightness"].shift(1)
+prices["VCPTightness"] = (
+    prices["ATR14"] / prices["Close"]
+) < VCP_TIGHTNESS_LIMIT
+
+prices["VolumeSurge"] = prices["Volume"] > (
+    prices["Volume20DAvg"] * 1.5
+)
+
+prices["PreviousDayTight"] = prices.groupby("Symbol")[
+    "VCPTightness"
+].shift(1)
 
 prices["IsBreakout"] = (
     (prices["Close"] >= prices["Close20DHigh"])
@@ -147,116 +199,122 @@ prices["IsBreakout"] = (
     & prices["PreviousDayTight"].fillna(False)
 )
 
-breakout_count = int(prices["IsBreakout"].sum())
-print(f"Breakout events found: {breakout_count:,}")
+print(f"Breakout entries found: {int(prices['IsBreakout'].sum()):,}")
 print()
 
 
 # ============================================================
-# 5. CALCULATE FORWARD TRADE OUTCOMES
+# FORWARD TRADE OUTCOMES
 # ============================================================
-# We check the next 30 trading rows for each stock.
-# Target-first / stop-first is calculated properly:
-# If both occur, the script checks which was reached first.
 
-print("Step 3 of 6: Calculating 10/20/30-day returns and 7% stop / 25% target outcomes...")
+print("Step 3 of 6: Testing 15% target before 7% stop...")
 
-records = []
+trade_records = []
 
-for symbol, stock in prices.groupby("Symbol", sort=False):
-    stock = stock.sort_values("Date").reset_index(drop=True)
-    breakout_indexes = stock.index[stock["IsBreakout"]].tolist()
+for symbol, stock_data in prices.groupby("Symbol", sort=False):
+    stock_data = stock_data.sort_values("Date").reset_index(drop=True)
+
+    breakout_indexes = stock_data.index[
+        stock_data["IsBreakout"]
+    ].tolist()
 
     for entry_index in breakout_indexes:
-        entry = stock.iloc[entry_index]
-        future = stock.iloc[entry_index + 1 : entry_index + 1 + HOLDING_DAYS]
+        entry = stock_data.iloc[entry_index]
 
-        if future.empty:
+        future = stock_data.iloc[
+            entry_index + 1 : entry_index + 1 + MAX_HOLDING_DAYS
+        ].copy()
+
+        # Skip entries without enough future data.
+        if len(future) < MAX_HOLDING_DAYS:
             continue
 
         entry_price = float(entry["Close"])
         stop_price = entry_price * (1 - STOP_LOSS_PCT / 100)
-        target_price = entry_price * (1 + TARGET_PCT / 100)
+        target_15_price = entry_price * (
+            1 + MINIMUM_TARGET_PCT / 100
+        )
 
-        future_10 = stock.iloc[entry_index + 10] if entry_index + 10 < len(stock) else None
-        future_20 = stock.iloc[entry_index + 20] if entry_index + 20 < len(stock) else None
-        future_30 = stock.iloc[entry_index + 30] if entry_index + 30 < len(stock) else None
+        core_result, core_day = first_hit_day(
+            future_data=future,
+            entry_price=entry_price,
+            target_percent=MINIMUM_TARGET_PCT,
+            stop_percent=STOP_LOSS_PCT,
+        )
 
-        fwd_10 = (
-            (float(future_10["Close"]) / entry_price - 1) * 100
-            if future_10 is not None else np.nan
-        )
-        fwd_20 = (
-            (float(future_20["Close"]) / entry_price - 1) * 100
-            if future_20 is not None else np.nan
-        )
-        fwd_30 = (
-            (float(future_30["Close"]) / entry_price - 1) * 100
-            if future_30 is not None else np.nan
-        )
+        future_10 = stock_data.iloc[entry_index + 10]
+        future_20 = stock_data.iloc[entry_index + 20]
+        future_30 = stock_data.iloc[entry_index + 30]
 
         max_high = float(future["High"].max())
         min_low = float(future["Low"].min())
 
-        target_day = None
-        stop_day = None
+        record = {
+            "Date": entry["Date"],
+            "Symbol": symbol,
+            "EntryPrice": entry_price,
+            "StopPrice7Pct": stop_price,
+            "TargetPrice15Pct": target_15_price,
+            "ForwardReturn10D": (
+                float(future_10["Close"]) / entry_price - 1
+            ) * 100,
+            "ForwardReturn20D": (
+                float(future_20["Close"]) / entry_price - 1
+            ) * 100,
+            "ForwardReturn30D": (
+                float(future_30["Close"]) / entry_price - 1
+            ) * 100,
+            "MaxFavorableMove30D": (
+                max_high / entry_price - 1
+            ) * 100,
+            "MaxAdverseMove30D": (
+                min_low / entry_price - 1
+            ) * 100,
+            "CoreResult15Before7": core_result,
+            "CoreDecisionDay": core_day,
+        }
 
-        for day_number, (_, day) in enumerate(future.iterrows(), start=1):
-            if target_day is None and float(day["High"]) >= target_price:
-                target_day = day_number
+        # Record whether 18%, 25% and 30% were hit before the 7% stop.
+        for extra_target in EXTRA_TARGETS:
+            extra_result, extra_day = first_hit_day(
+                future_data=future,
+                entry_price=entry_price,
+                target_percent=extra_target,
+                stop_percent=STOP_LOSS_PCT,
+            )
 
-            if stop_day is None and float(day["Low"]) <= stop_price:
-                stop_day = day_number
+            target_label = str(int(extra_target))
+            record[f"Target{target_label}BeforeStop7"] = extra_result
+            record[f"Target{target_label}DecisionDay"] = extra_day
 
-            if target_day is not None or stop_day is not None:
-                break
-
-        if target_day is not None and (stop_day is None or target_day < stop_day):
-            trade_result = "TARGET_25_BEFORE_STOP"
-            trade_return = TARGET_PCT
-        elif stop_day is not None and (target_day is None or stop_day < target_day):
-            trade_result = "STOP_7_BEFORE_TARGET"
-            trade_return = -STOP_LOSS_PCT
+        # Rule-based return for the primary 15% / 7% test.
+        if core_result == "SUCCESS":
+            record["RuleBasedReturn15Before7"] = MINIMUM_TARGET_PCT
+        elif core_result == "STOPPED_OUT":
+            record["RuleBasedReturn15Before7"] = -STOP_LOSS_PCT
         else:
-            trade_result = "NEITHER_IN_30D"
-            exit_price = float(future.iloc[-1]["Close"])
-            trade_return = (exit_price / entry_price - 1) * 100
+            record["RuleBasedReturn15Before7"] = (
+                float(future.iloc[-1]["Close"]) / entry_price - 1
+            ) * 100
 
-        records.append(
-            {
-                "Date": entry["Date"],
-                "Symbol": symbol,
-                "EntryPrice": entry_price,
-                "StopPrice7Pct": stop_price,
-                "TargetPrice25Pct": target_price,
-                "ForwardReturn10D": fwd_10,
-                "ForwardReturn20D": fwd_20,
-                "ForwardReturn30D": fwd_30,
-                "MaxFavorableMove30D": (max_high / entry_price - 1) * 100,
-                "MaxAdverseMove30D": (min_low / entry_price - 1) * 100,
-                "TargetDay": target_day,
-                "StopDay": stop_day,
-                "TradeResult": trade_result,
-                "TradeReturnRuleBased": trade_return,
-            }
-        )
+        trade_records.append(record)
 
-trades = pd.DataFrame(records)
+trades = pd.DataFrame(trade_records)
 
 if trades.empty:
     raise ValueError(
-        "No completed breakout trades were found. "
-        "This can happen if the data has fewer than 30 future trading days."
+        "No fully completed 30-trading-day breakout records were found."
     )
 
-print(f"Completed breakout trades available for analysis: {len(trades):,}")
+print(f"Completed trade records available: {len(trades):,}")
 print()
 
 
 # ============================================================
-# 6. ADD SAME-DAY MARKET BREADTH CONDITIONS
+# ADD SAME-DAY BREADTH DATA
 # ============================================================
-print("Step 4 of 6: Adding same-day breadth conditions to each breakout...")
+
+print("Step 4 of 6: Adding market-breadth conditions...")
 
 candidate_breadth_columns = [
     "Date",
@@ -276,24 +334,35 @@ candidate_breadth_columns = [
     "T3Wins",
     "LargePct20EMA",
     "LargePct50EMA",
+    "LargePct200EMA",
     "MidPct20EMA",
     "MidPct50EMA",
+    "MidPct200EMA",
     "SmallPct20EMA",
     "SmallPct50EMA",
+    "SmallPct200EMA",
     "MicroPct20EMA",
     "MicroPct50EMA",
+    "MicroPct200EMA",
 ]
 
-available_breadth_columns = [
-    column for column in candidate_breadth_columns if column in breadth.columns
+available_columns = [
+    column
+    for column in candidate_breadth_columns
+    if column in breadth.columns
 ]
 
-breadth_for_merge = breadth[available_breadth_columns].copy()
+breadth_for_merge = breadth[available_columns].copy()
 
-if "T3Breakouts" in breadth_for_merge.columns and "T3Wins" in breadth_for_merge.columns:
+if (
+    "T3Breakouts" in breadth_for_merge.columns
+    and "T3Wins" in breadth_for_merge.columns
+):
     breadth_for_merge["FollowThroughRate"] = np.where(
         breadth_for_merge["T3Breakouts"] > 0,
-        breadth_for_merge["T3Wins"] / breadth_for_merge["T3Breakouts"] * 100,
+        breadth_for_merge["T3Wins"]
+        / breadth_for_merge["T3Breakouts"]
+        * 100,
         np.nan,
     )
 
@@ -301,51 +370,80 @@ trades = trades.merge(breadth_for_merge, on="Date", how="left")
 
 
 # ============================================================
-# 7. CREATE SUMMARY OUTPUT
+# CREATE OVERALL SUMMARY
 # ============================================================
-print("Step 5 of 6: Creating research summary and feature-bucket tables...")
+
+print("Step 5 of 6: Creating summary and feature tests...")
+
+core_success = trades["CoreResult15Before7"] == "SUCCESS"
+core_stop = trades["CoreResult15Before7"] == "STOPPED_OUT"
+core_same_day = (
+    trades["CoreResult15Before7"] == "TARGET_AND_STOP_SAME_DAY"
+)
+core_neither = trades["CoreResult15Before7"] == "NO_DECISION"
 
 summary_rows = [
-    {"Metric": "Total completed breakout trades", "Value": len(trades)},
     {
-        "Metric": "Average 10-day return (%)",
+        "Metric": "Completed breakout trades tested",
+        "Value": len(trades),
+    },
+    {
+        "Metric": "15% target before 7% stop (%)",
+        "Value": core_success.mean() * 100,
+    },
+    {
+        "Metric": "7% stop before 15% target (%)",
+        "Value": core_stop.mean() * 100,
+    },
+    {
+        "Metric": "15% target and 7% stop same day (%)",
+        "Value": core_same_day.mean() * 100,
+    },
+    {
+        "Metric": "Neither 15% target nor 7% stop in 30 days (%)",
+        "Value": core_neither.mean() * 100,
+    },
+    {
+        "Metric": "18% target before 7% stop (%)",
+        "Value": (
+            trades["Target18BeforeStop7"] == "SUCCESS"
+        ).mean() * 100,
+    },
+    {
+        "Metric": "25% target before 7% stop (%)",
+        "Value": (
+            trades["Target25BeforeStop7"] == "SUCCESS"
+        ).mean() * 100,
+    },
+    {
+        "Metric": "30% target before 7% stop (%)",
+        "Value": (
+            trades["Target30BeforeStop7"] == "SUCCESS"
+        ).mean() * 100,
+    },
+    {
+        "Metric": "Average 10-day close-to-close return (%)",
         "Value": trades["ForwardReturn10D"].mean(),
     },
     {
-        "Metric": "Median 10-day return (%)",
+        "Metric": "Median 10-day close-to-close return (%)",
         "Value": trades["ForwardReturn10D"].median(),
     },
     {
-        "Metric": "Average 20-day return (%)",
+        "Metric": "Average 20-day close-to-close return (%)",
         "Value": trades["ForwardReturn20D"].mean(),
     },
     {
-        "Metric": "Median 20-day return (%)",
+        "Metric": "Median 20-day close-to-close return (%)",
         "Value": trades["ForwardReturn20D"].median(),
     },
     {
-        "Metric": "Average 30-day return (%)",
+        "Metric": "Average 30-day close-to-close return (%)",
         "Value": trades["ForwardReturn30D"].mean(),
     },
     {
-        "Metric": "25% target reached before 7% stop (%)",
-        "Value": (trades["TradeResult"] == "TARGET_25_BEFORE_STOP").mean() * 100,
-    },
-    {
-        "Metric": "7% stop reached before 25% target (%)",
-        "Value": (trades["TradeResult"] == "STOP_7_BEFORE_TARGET").mean() * 100,
-    },
-    {
-        "Metric": "Neither target nor stop in 30 days (%)",
-        "Value": (trades["TradeResult"] == "NEITHER_IN_30D").mean() * 100,
-    },
-    {
-        "Metric": "Average rule-based trade return (%)",
-        "Value": trades["TradeReturnRuleBased"].mean(),
-    },
-    {
-        "Metric": "Median rule-based trade return (%)",
-        "Value": trades["TradeReturnRuleBased"].median(),
+        "Metric": "Average rule-based return: 15% before 7% (%)",
+        "Value": trades["RuleBasedReturn15Before7"].mean(),
     },
 ]
 
@@ -355,12 +453,8 @@ summary.to_csv(OUTPUT_SUMMARY, index=False)
 
 
 # ============================================================
-# 8. TEST EACH MARKET FEATURE
+# FEATURE-BUCKET TESTS
 # ============================================================
-# Low / Medium / High means three equal-sized groups.
-# Example:
-# "High PctAbove20EMA" = breakouts taken on days with the strongest
-# one-third of PctAbove20EMA readings in your actual history.
 
 features_to_test = [
     "PctAbove20EMA",
@@ -378,12 +472,16 @@ features_to_test = [
     "FollowThroughRate",
     "LargePct20EMA",
     "LargePct50EMA",
+    "LargePct200EMA",
     "MidPct20EMA",
     "MidPct50EMA",
+    "MidPct200EMA",
     "SmallPct20EMA",
     "SmallPct50EMA",
+    "SmallPct200EMA",
     "MicroPct20EMA",
     "MicroPct50EMA",
+    "MicroPct200EMA",
 ]
 
 bucket_rows = []
@@ -392,111 +490,164 @@ for feature in features_to_test:
     if feature not in trades.columns:
         continue
 
-    valid = trades.dropna(subset=[feature]).copy()
+    valid_data = trades.dropna(subset=[feature]).copy()
 
-    if len(valid) < 30:
+    if len(valid_data) < 30:
         continue
 
     try:
-        valid["Bucket"] = pd.qcut(
-            valid[feature].rank(method="first"),
+        valid_data["Bucket"] = pd.qcut(
+            valid_data[feature].rank(method="first"),
             q=3,
             labels=["Low", "Medium", "High"],
         )
     except ValueError:
         continue
 
-    for bucket_name, group in valid.groupby("Bucket", observed=False):
+    for bucket_name, group in valid_data.groupby(
+        "Bucket", observed=False
+    ):
         bucket_rows.append(
             {
                 "Feature": feature,
                 "Bucket": str(bucket_name),
                 "BreakoutTrades": len(group),
-                "Average10DayReturnPct": group["ForwardReturn10D"].mean(),
-                "Average20DayReturnPct": group["ForwardReturn20D"].mean(),
-                "Median20DayReturnPct": group["ForwardReturn20D"].median(),
-                "Target25BeforeStopPct": (
-                    group["TradeResult"] == "TARGET_25_BEFORE_STOP"
-                ).mean() * 100,
-                "Stop7BeforeTargetPct": (
-                    group["TradeResult"] == "STOP_7_BEFORE_TARGET"
-                ).mean() * 100,
-                "AverageRuleBasedReturnPct": group["TradeReturnRuleBased"].mean(),
+                "Target15BeforeStop7Pct": (
+                    group["CoreResult15Before7"] == "SUCCESS"
+                ).mean()
+                * 100,
+                "Stop7BeforeTarget15Pct": (
+                    group["CoreResult15Before7"] == "STOPPED_OUT"
+                ).mean()
+                * 100,
+                "Target18BeforeStop7Pct": (
+                    group["Target18BeforeStop7"] == "SUCCESS"
+                ).mean()
+                * 100,
+                "Target25BeforeStop7Pct": (
+                    group["Target25BeforeStop7"] == "SUCCESS"
+                ).mean()
+                * 100,
+                "Target30BeforeStop7Pct": (
+                    group["Target30BeforeStop7"] == "SUCCESS"
+                ).mean()
+                * 100,
+                "Average10DayReturnPct": group[
+                    "ForwardReturn10D"
+                ].mean(),
+                "Average20DayReturnPct": group[
+                    "ForwardReturn20D"
+                ].mean(),
+                "AverageRuleBasedReturnPct": group[
+                    "RuleBasedReturn15Before7"
+                ].mean(),
             }
         )
 
 buckets = pd.DataFrame(bucket_rows)
 
-if not buckets.empty:
-    number_columns = [
-        "Average10DayReturnPct",
-        "Average20DayReturnPct",
-        "Median20DayReturnPct",
-        "Target25BeforeStopPct",
-        "Stop7BeforeTargetPct",
-        "AverageRuleBasedReturnPct",
-    ]
-    buckets[number_columns] = buckets[number_columns].round(3)
-    buckets = buckets.sort_values(["Feature", "Bucket"])
-    buckets.to_csv(OUTPUT_BUCKETS, index=False)
-else:
-    pd.DataFrame(
+if buckets.empty:
+    buckets = pd.DataFrame(
         columns=[
             "Feature",
             "Bucket",
             "BreakoutTrades",
+            "Target15BeforeStop7Pct",
+            "Stop7BeforeTarget15Pct",
+            "Target18BeforeStop7Pct",
+            "Target25BeforeStop7Pct",
+            "Target30BeforeStop7Pct",
             "Average10DayReturnPct",
             "Average20DayReturnPct",
-            "Median20DayReturnPct",
-            "Target25BeforeStopPct",
-            "Stop7BeforeTargetPct",
             "AverageRuleBasedReturnPct",
         ]
-    ).to_csv(OUTPUT_BUCKETS, index=False)
+    )
+else:
+    numeric_columns = [
+        "Target15BeforeStop7Pct",
+        "Stop7BeforeTarget15Pct",
+        "Target18BeforeStop7Pct",
+        "Target25BeforeStop7Pct",
+        "Target30BeforeStop7Pct",
+        "Average10DayReturnPct",
+        "Average20DayReturnPct",
+        "AverageRuleBasedReturnPct",
+    ]
+
+    buckets[numeric_columns] = buckets[numeric_columns].round(3)
+    buckets = buckets.sort_values(["Feature", "Bucket"])
+
+buckets.to_csv(OUTPUT_BUCKETS, index=False)
 
 
 # ============================================================
-# 9. CREATE DAILY SCORECARD
+# DAILY REGIME SCORECARD
 # ============================================================
+
 daily_scorecard = (
     trades.groupby("Date")
     .agg(
         BreakoutsThatDay=("Symbol", "count"),
+        Target15BeforeStop7Pct=(
+            "CoreResult15Before7",
+            lambda values: (values == "SUCCESS").mean() * 100,
+        ),
+        Stop7BeforeTarget15Pct=(
+            "CoreResult15Before7",
+            lambda values: (values == "STOPPED_OUT").mean() * 100,
+        ),
+        Target18BeforeStop7Pct=(
+            "Target18BeforeStop7",
+            lambda values: (values == "SUCCESS").mean() * 100,
+        ),
+        Target25BeforeStop7Pct=(
+            "Target25BeforeStop7",
+            lambda values: (values == "SUCCESS").mean() * 100,
+        ),
+        Target30BeforeStop7Pct=(
+            "Target30BeforeStop7",
+            lambda values: (values == "SUCCESS").mean() * 100,
+        ),
         Average10DayReturnPct=("ForwardReturn10D", "mean"),
         Average20DayReturnPct=("ForwardReturn20D", "mean"),
-        Target25BeforeStopPct=(
-            "TradeResult",
-            lambda values: (values == "TARGET_25_BEFORE_STOP").mean() * 100,
+        AverageRuleBasedReturnPct=(
+            "RuleBasedReturn15Before7",
+            "mean",
         ),
-        Stop7BeforeTargetPct=(
-            "TradeResult",
-            lambda values: (values == "STOP_7_BEFORE_TARGET").mean() * 100,
-        ),
-        AverageRuleBasedReturnPct=("TradeReturnRuleBased", "mean"),
     )
     .reset_index()
 )
 
-daily_scorecard = daily_scorecard.merge(breadth_for_merge, on="Date", how="left")
+daily_scorecard = daily_scorecard.merge(
+    breadth_for_merge,
+    on="Date",
+    how="left",
+)
+
 daily_scorecard = daily_scorecard.round(3)
 daily_scorecard.to_csv(OUTPUT_DAILY, index=False)
+
+
+# ============================================================
+# SAVE INDIVIDUAL TRADE RECORDS
+# ============================================================
 
 trades = trades.sort_values(["Date", "Symbol"]).round(3)
 trades.to_csv(OUTPUT_TRADES, index=False)
 
 
 # ============================================================
-# 10. FINISHED
+# FINISH
 # ============================================================
+
 print()
-print("=" * 70)
+print("=" * 72)
 print("BACKTEST COMPLETE")
-print("=" * 70)
-print("New research-only files created:")
+print("=" * 72)
+print("Created these new files inside the Research folder:")
 print(f"1. {OUTPUT_SUMMARY.name}")
 print(f"2. {OUTPUT_BUCKETS.name}")
 print(f"3. {OUTPUT_DAILY.name}")
 print(f"4. {OUTPUT_TRADES.name}")
 print()
-print("These four files are inside the Research folder.")
-print("Your existing dashboard and live data files were not changed.")
+print("Your dashboard and existing live data files were not changed.")
