@@ -285,7 +285,8 @@ declines = int(latest.get('Declines', 0))
 if is_live_active and st.session_state.analysis_date == max_date:
     advances = live_advances
     declines = live_declines
-    actual_date_str = f"{datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, 30))).strftime('%d %b %Y')} (⚡ LIVE)"
+    # FIXED SYNTAX ERROR HERE
+    actual_date_str = f"{datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime('%d %b %Y')} (⚡ LIVE)"
 
 # --- QUANT CALCULATIONS & ENGINE SIGNALS ---
 mid50 = float(latest.get('Mid_Pct_50_EMA', 0)) if pd.notna(latest.get('Mid_Pct_50_EMA')) else 0
