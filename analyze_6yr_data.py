@@ -26,16 +26,19 @@ df['DayOfWeek'] = df['Date'].dt.dayofweek
 df = df[df['DayOfWeek'] < 5].copy()
 df.drop(columns=['DayOfWeek'], inplace=True)
 
-df['Price_Change'] = df.groupby('Symbol')['Close'].diff().fillna(0)
-
-# REWRITTEN: Dropped the arbitrary "> 100 movers" selection bias. 
-# Now only drops dates where the ENTIRE market traded 0 volume (actual holidays).
 daily_volume = df.groupby('Date')['Volume'].sum()
 valid_dates = daily_volume[daily_volume > 0].index
 df = df[df['Date'].isin(valid_dates)].reset_index(drop=True)
-df.drop(columns=['Price_Change'], inplace=True)
 
 print("In-memory dataset cleaned. Master Parquet left untouched.")
+
+# --- NEW CACHE SAVING STEP ---
+print("Saving lightweight lookback cache for intraday syncs...")
+# We only need enough history to calculate 200 EMAs and 252-day highs
+cache_start_date = df['Date'].max() - pd.Timedelta(days=400)
+cache_df = df[df['Date'] >= cache_start_date].reset_index(drop=True)
+cache_df.to_parquet("trailing_cache.parquet", index=False)
+print("✅ Lightweight cache saved to 'trailing_cache.parquet'.")
 
 # -------------------------------------------------------------
 # STEP 1: DYNAMIC TRAILING 45-DAY ROLLING TURNOVER CATEGORIZATION
@@ -54,7 +57,6 @@ conditions = [
     (df['Cap_Rank'] > 100) & (df['Cap_Rank'] <= 250),
     (df['Cap_Rank'] > 250) & (df['Cap_Rank'] <= 500)
 ]
-# REWRITTEN: Honestly renamed the variables to Liquidity, replacing "Cap_Category" completely.
 choices = ['Top 100 Liq', 'Mid 150 Liq', 'Lower 250 Liq']
 df['Liquidity_Category'] = np.select(conditions, choices, default='Micro Liq')
 
@@ -98,26 +100,19 @@ df['Down_25_1M'] = df['Pct_1M'] <= -25.0
 df['New_52W_High'] = df['Close'] >= df['Rolling_52W_High']
 df['New_52W_Low'] = df['Close'] <= df['Rolling_52W_Low']
 
-# --- UPGRADED TRUE VCP BREAKOUT LOGIC ---
 df['Prev_Close'] = df.groupby('Symbol')['Close'].shift(1)
 df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Prev_Close']), abs(df['Low'] - df['Prev_Close'])))
 df['ATR_14'] = df.groupby('Symbol')['TR'].transform(lambda x: x.rolling(14, min_periods=5).mean())
 df['Vol_20D_Avg'] = df.groupby('Symbol')['Volume'].transform(lambda x: x.rolling(20, min_periods=5).mean())
 
 df['20D_High'] = df.groupby('Symbol')['Close'].transform(lambda x: x == x.rolling(20, min_periods=20).max())
+df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
+df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 1.5)
 
-# REWRITTEN: Added strict VCP Volume and Tightness confirmations
-df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04  # Volatility contraction (<4% ATR)
-df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 1.5) # 50% above average volume
-
-# A true breakout requires Price Pivot + Volume Surge + Prior Tightness
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & df.groupby('Symbol')['VCP_Tightness'].shift(1)
-
-# REWRITTEN: Removed the dead lambda code. 
 df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3)
 df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
 df['Follow_Through_Win'] = (df['Is_Breakout_3d_ago'] == True) & (df['Close'] > df['Close_3d_ago'])
-# ---------------------------------------------------
 
 df['Up_Volume'] = np.where(df['Gainer'], df['Daily_Turnover'], 0)
 df['Down_Volume'] = np.where(df['Loser'], df['Daily_Turnover'], 0)
@@ -126,7 +121,6 @@ df['Down_Volume'] = np.where(df['Loser'], df['Daily_Turnover'], 0)
 # STEP 4: CATEGORY AGGREGATIONS
 # -------------------------------------------------------------
 def get_liq_breadth(data, liq_name, prefix):
-    # Changed from Cap_Category to Liquidity_Category
     liq_df = data[data['Liquidity_Category'] == liq_name]
     aggregated = liq_df.groupby('Date').agg(
         Valid_20=('Valid_20_EMA', 'sum'),
@@ -142,7 +136,6 @@ def get_liq_breadth(data, liq_name, prefix):
     aggregated[f'{prefix}_Pct_200_EMA'] = (aggregated['Above_200'] / aggregated['Valid_200'].replace(0, np.nan)) * 100
     return aggregated[['Date', f'{prefix}_Pct_20_EMA', f'{prefix}_Pct_50_EMA', f'{prefix}_Pct_200_EMA']]
 
-# NOTE: Passed new Liquidity names but preserved old UI Prefix headers ('Large', 'Mid', etc.) to stop dashboard crashes
 large_breadth = get_liq_breadth(df, 'Top 100 Liq', 'Large')
 mid_breadth = get_liq_breadth(df, 'Mid 150 Liq', 'Mid')
 small_breadth = get_liq_breadth(df, 'Lower 250 Liq', 'Small')
