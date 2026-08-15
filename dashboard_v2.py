@@ -17,7 +17,7 @@ if 'sync_in_progress' not in st.session_state:
     st.session_state.sync_start_time = 0
     st.session_state.pre_sync_time = ""
 
-# --- CSS STYLING (UPGRADED FOR PROPER FITS & READABILITY) ---
+# --- CSS STYLING ---
 st.markdown("""
     <style>
     .main { background-color: #f8fafc; }
@@ -237,7 +237,6 @@ if st.session_state.sync_in_progress:
         st.session_state.sync_in_progress = False
         st.error("Sync timed out. Please try clicking Live Intraday Sync again.")
 
-st.markdown("<hr style='margin: 10px 0px 20px 0px;'>", unsafe_allow_html=True)
 
 df_filtered = df_agg[df_agg['Date'] <= st.session_state.analysis_date].copy()
 if df_filtered.empty:
@@ -282,6 +281,8 @@ dn_vol = float(latest.get('Total_Down_Volume', 0))
 tot_vol = up_vol + dn_vol
 up_vol_pct = (up_vol / tot_vol * 100) if tot_vol > 0 else 50.0
 
+ad_ratio = (advances / declines) if declines > 0 else advances
+
 # Signals
 brake_signals = []
 if (pct_20 - pct_50) < -8: brake_signals.append(f"Short-Term Breadth Breakdown: % above 20 EMA ({pct_20:.1f}%) is far below % above 50 EMA ({pct_50:.1f}%)")
@@ -292,11 +293,11 @@ if mcclellan < 0 and regime_score > 60: brake_signals.append(f"Momentum Divergen
 if down4 / (up4 + 1) > 1.8: brake_signals.append(f"Aggressive Selling: Down 4% days are vastly outnumbering Up 4% days")
 
 bottom_signals = []
-if up4 >= 500: bottom_signals.append(f"🚀 Breadth Thrust: Massive surge of {up4:.0f} stocks moving up >4% in 3 days")
-if pct_20 < 12.0: bottom_signals.append(f"🌊 Washout: Extreme oversold levels, only {pct_20:.1f}% of stocks are above their 20 EMA")
-if up_vol_pct >= 88.0: bottom_signals.append(f"🔥 Ignition Volume: {up_vol_pct:.1f}% of all volume flowed into advancing stocks today")
-if trin >= 2.0: bottom_signals.append(f"🩸 Capitulation: TRIN spiked to {trin:.2f}, showing extreme panic selling")
-if net_hl < -250: bottom_signals.append(f"⚠️ Extreme Fear: Huge surge in new 52-week lows ({net_hl:.0f})")
+if up4 >= 500: bottom_signals.append(f"Breadth Thrust: Massive surge of {up4:.0f} stocks moving up >4% in 3 days")
+if pct_20 < 12.0: bottom_signals.append(f"Washout: Extreme oversold levels, only {pct_20:.1f}% of stocks are above their 20 EMA")
+if up_vol_pct >= 88.0: bottom_signals.append(f"Ignition Volume: {up_vol_pct:.1f}% of all volume flowed into advancing stocks today")
+if trin >= 2.0: bottom_signals.append(f"Capitulation: TRIN spiked to {trin:.2f}, showing extreme panic selling")
+if net_hl < -250: bottom_signals.append(f"Extreme Fear: Huge surge in new 52-week lows ({net_hl:.0f})")
 
 # Lookback filter for all charts
 t_sel1, t_sel2 = st.columns([4, 1.5])
@@ -304,11 +305,46 @@ with t_sel2:
     timeframe = st.radio("Chart Lookback Window:", ["3M", "6M", "1Y", "3Y", "Max"], horizontal=True, index=2)
 tf_map = {"3M": 63, "6M": 126, "1Y": 252, "3Y": 756, "Max": len(df_filtered)}
 df_view = df_filtered.tail(tf_map.get(timeframe, 252))
+last_date = df_view['Date'].iloc[-1]
+
+# ==============================================================================
+# EXECUTIVE SUMMARY (NEW TOP PANEL)
+# ==============================================================================
+# Prepare colors and text for summary
+sum_trend_txt = "STRONG UPTREND" if regime_score >= 70 else ("CHOP / CAUTIOUS" if regime_score >= 50 else ("DEFENSIVE" if regime_score >= 40 else "DOWNTREND"))
+sum_trend_col = "#16a34a" if regime_score >= 60 else ("#eab308" if regime_score >= 40 else "#dc2626")
+
+sum_breadth_txt = "Healthy" if pct_200 >= 50 else "Weak"
+sum_breadth_col = "#16a34a" if pct_200 >= 50 else "#dc2626"
+
+sum_vol_txt = "Buyers" if up_vol_pct >= 50 else "Sellers"
+sum_vol_col = "#16a34a" if up_vol_pct >= 50 else "#dc2626"
+
+sum_peak_txt = f"⚠️ {len(brake_signals)} Warning(s) Active" if brake_signals else "✅ Clear"
+sum_peak_col = "#dc2626" if brake_signals else "#16a34a"
+
+sum_bot_txt = f"🚀 {len(bottom_signals)} Signal(s) Active" if bottom_signals else "⚪ Neutral"
+sum_bot_col = "#2563eb" if bottom_signals else "#64748b"
+
+st.markdown("<div class='panel-header' style='margin-top: 5px;'>📝 EXECUTIVE SUMMARY</div>", unsafe_allow_html=True)
+with st.container(border=True):
+    st.markdown(f"""
+    <div style='font-size: 16px; color: #334155; line-height: 1.8; font-weight: 500;'>
+        <ul style='margin-bottom: 0px;'>
+            <li><b>Current Environment:</b> Market is in a <span style='color:{sum_trend_col}; font-weight:800;'>{sum_trend_txt}</span> (Regime Score: {regime_score}/100).</li>
+            <li><b>Market Breadth:</b> <span style='color:{sum_breadth_col}; font-weight:800;'>{sum_breadth_txt}</span> structural health with {pct_200:.1f}% of stocks trading above their long-term 200 EMA.</li>
+            <li><b>Liquidity Flow:</b> <span style='color:{sum_vol_col}; font-weight:800;'>{sum_vol_txt}</span> are in control, commanding {up_vol_pct:.1f}% of total broad market volume today.</li>
+            <li><b>Risk at Peaks (Distribution):</b> <span style='color:{sum_peak_col}; font-weight:800;'>{sum_peak_txt}</span> - {("Signs of institutional distribution or topping exhaustion detected." if brake_signals else "No major signs of topping exhaustion.")}</li>
+            <li><b>Signs of Bottoms (Capitulation):</b> <span style='color:{sum_bot_col}; font-weight:800;'>{sum_bot_txt}</span> - {("Extreme panic or buy thrusts detected, increasing probability of a bottom." if bottom_signals else "No extreme panic, washouts, or breadth thrusts currently active.")}</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
 
 # ==============================================================================
 # PANEL 1: CURRENT MARKET ENVIRONMENT (TREND & HEALTH)
 # ==============================================================================
-st.markdown("<div class='panel-header'>📊 PANEL 1: CURRENT MARKET TREND & HEALTH</div>", unsafe_allow_html=True)
+st.markdown("<br><div class='panel-header'>📊 PANEL 1: CURRENT MARKET TREND & HEALTH</div>", unsafe_allow_html=True)
 
 p1_c1, p1_c2, p1_c3, p1_c4 = st.columns(4)
 
@@ -331,7 +367,6 @@ with p1_c2:
 with p1_c3:
     with st.container(border=True):
         st.markdown("<div class='card-title'>Adv / Dec Ratio (Broad Market)</div>", unsafe_allow_html=True)
-        ad_ratio = (advances / declines) if declines > 0 else advances
         a_col = "#16a34a" if advances >= declines else "#dc2626"
         st.markdown(f"<div class='metric-value' style='color:{a_col};'>{advances} : {declines}</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='metric-sub'>A/D Ratio: <span style='font-weight:900; color:{a_col}'>{ad_ratio:.2f}</span></div>", unsafe_allow_html=True)
@@ -356,9 +391,9 @@ with st.container(border=True):
     st.markdown(f"<div style='font-size: 15px; font-weight: 800; margin-bottom: 5px; padding-left: 5px;'>Live Readings: <span style='color:#22c55e;'>200 EMA: {val_200:.1f}%</span> &nbsp; | &nbsp; <span style='color:#f97316;'>50 EMA: {val_50:.1f}%</span> &nbsp; | &nbsp; <span style='color:#06b6d4;'>20 EMA: {val_20:.1f}%</span></div>", unsafe_allow_html=True)
 
     fig_ema = go.Figure()
-    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_200_EMA'], name='% > 200 EMA', line=dict(color='#22c55e', width=3.5)))
-    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_50_EMA'], name='% > 50 EMA', line=dict(color='#f97316', width=3)))
-    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_20_EMA'], name='% > 20 EMA', line=dict(color='#06b6d4', width=2.5)))
+    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_200_EMA'], name='% > 200 EMA (Long Term)', line=dict(color='#22c55e', width=3.5)))
+    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_50_EMA'], name='% > 50 EMA (Medium Term)', line=dict(color='#f97316', width=3)))
+    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_20_EMA'], name='% > 20 EMA (Short Term)', line=dict(color='#06b6d4', width=2.5)))
     fig_ema.add_hline(y=50, line_dash="dash", line_color="#94a3b8", line_width=2)
     
     fig_ema.update_layout(height=360, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), plot_bgcolor="white", paper_bgcolor="white")
