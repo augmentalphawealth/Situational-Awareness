@@ -5,7 +5,7 @@ import pandas as pd
 
 
 # ============================================================
-# FILES AND CORE TRADE RULE
+# FILES AND TRADING RULES
 # ============================================================
 
 RESEARCH_FOLDER = Path(__file__).resolve().parent
@@ -14,11 +14,15 @@ REPO_FOLDER = RESEARCH_FOLDER.parent
 PARQUET_FILE = REPO_FOLDER / "nse_6yr_historical.parquet"
 BREADTH_FILE = REPO_FOLDER / "historical_breadth_regime_6yr.csv"
 
+# Your existing VCP-type entry definition.
 VCP_TIGHTNESS_LIMIT = 0.04
+
+# Your trading objective.
 STOP_LOSS_PCT = 7.0
 TARGET_PCT = 15.0
 MAX_HOLDING_DAYS = 30
 
+# Research output files.
 OUTPUT_AUDIT = RESEARCH_FOLDER / "research_input_audit.csv"
 OUTPUT_TRADES = RESEARCH_FOLDER / "research_breakout_trades_enriched.csv"
 OUTPUT_BUCKETS = RESEARCH_FOLDER / "research_feature_buckets.csv"
@@ -28,6 +32,52 @@ OUTPUT_WALKFORWARD = RESEARCH_FOLDER / "research_walkforward_results.csv"
 OUTPUT_DAILY_SCORE = RESEARCH_FOLDER / "research_best_composite_score_daily.csv"
 OUTPUT_ZONES = RESEARCH_FOLDER / "research_score_action_zones.csv"
 OUTPUT_SUMMARY = RESEARCH_FOLDER / "research_run_summary.csv"
+
+
+# ============================================================
+# COLUMN NAME MAP
+# ============================================================
+# LEFT SIDE: actual headings in historical_breadth_regime_6yr.csv
+# RIGHT SIDE: simpler internal names used by this research code.
+
+COLUMN_MAP = {
+    "Total_Universe": "TotalUniverse",
+    "Above_20_EMA": "Above20EMA",
+    "Above_50_EMA": "Above50EMA",
+    "Above_200_EMA": "Above200EMA",
+    "Up_4_Count": "Up4Count",
+    "Down_4_Count": "Down4Count",
+    "Up_25_1M_Count": "Up251MCount",
+    "Down_25_1M_Count": "Down251MCount",
+    "New_52W_Highs": "New52WHighs",
+    "New_52W_Lows": "New52WLows",
+    "Total_Up_Volume": "TotalUpVolume",
+    "Total_Down_Volume": "TotalDownVolume",
+    "T3_Breakouts": "T3Breakouts",
+    "T3_Wins": "T3Wins",
+    "Pct_Above_20_EMA": "PctAbove20EMA",
+    "Pct_Above_50_EMA": "PctAbove50EMA",
+    "Pct_Above_200_EMA": "PctAbove200EMA",
+    "Rolling_3D_Up_4": "Rolling3DUp4",
+    "Rolling_3D_Down_4": "Rolling3DDown4",
+    "Slope_20_EMA": "Slope20EMA",
+    "Slope_50_EMA": "Slope50EMA",
+    "Slope_200_EMA": "Slope200EMA",
+    "Net_52W_High_Low": "Net52WHighLow",
+    "Volume_Ratio": "VolumeRatio",
+    "Large_Pct_20_EMA": "LargePct20EMA",
+    "Large_Pct_50_EMA": "LargePct50EMA",
+    "Large_Pct_200_EMA": "LargePct200EMA",
+    "Mid_Pct_20_EMA": "MidPct20EMA",
+    "Mid_Pct_50_EMA": "MidPct50EMA",
+    "Mid_Pct_200_EMA": "MidPct200EMA",
+    "Small_Pct_20_EMA": "SmallPct20EMA",
+    "Small_Pct_50_EMA": "SmallPct50EMA",
+    "Small_Pct_200_EMA": "SmallPct200EMA",
+    "Micro_Pct_20_EMA": "MicroPct20EMA",
+    "Micro_Pct_50_EMA": "MicroPct50EMA",
+    "Micro_Pct_200_EMA": "MicroPct200EMA",
+}
 
 FEATURES = [
     "PctAbove20EMA",
@@ -57,6 +107,7 @@ FEATURES = [
     "MicroPct200EMA",
 ]
 
+# These are negative when they rise.
 DOWNSIDE_FEATURES = {
     "Rolling3DDown4",
     "Down251MCount",
@@ -71,6 +122,14 @@ def clean_dates(series):
     return pd.to_datetime(series, errors="coerce").dt.normalize()
 
 
+def safe_csv(dataframe, file_path):
+    dataframe.to_csv(file_path, index=False)
+
+
+def percentile_score(series):
+    return series.rank(pct=True, method="average") * 100
+
+
 def first_hit(future_data, entry_price, target_pct, stop_pct):
     target_price = entry_price * (1 + target_pct / 100)
     stop_price = entry_price * (1 - stop_pct / 100)
@@ -79,6 +138,8 @@ def first_hit(future_data, entry_price, target_pct, stop_pct):
         target_hit = float(row["High"]) >= target_price
         stop_hit = float(row["Low"]) <= stop_price
 
+        # Daily data cannot establish which happened first if both
+        # target and stop occurred on the same candle.
         if target_hit and stop_hit:
             return "AMBIGUOUS_SAME_DAY", day_number
 
@@ -91,57 +152,76 @@ def first_hit(future_data, entry_price, target_pct, stop_pct):
     return "TIMEOUT", np.nan
 
 
-def percentile_rank(series):
-    return series.rank(pct=True, method="average") * 100
-
-
-def safe_write_csv(dataframe, path):
-    dataframe.to_csv(path, index=False)
-
-
 # ============================================================
-# LOAD AND VALIDATE INPUTS
+# LOAD DATA
 # ============================================================
 
-print("Loading inputs...")
+print("Loading parquet and breadth data...")
 
 if not PARQUET_FILE.exists():
-    raise FileNotFoundError(f"Missing parquet file: {PARQUET_FILE}")
+    raise FileNotFoundError(f"Parquet missing: {PARQUET_FILE}")
 
 if not BREADTH_FILE.exists():
-    raise FileNotFoundError(f"Missing breadth CSV: {BREADTH_FILE}")
+    raise FileNotFoundError(f"Breadth CSV missing: {BREADTH_FILE}")
 
 prices = pd.read_parquet(PARQUET_FILE)
 breadth = pd.read_csv(BREADTH_FILE)
 
+# Remove accidental spaces from CSV headers, then rename them.
+breadth.columns = breadth.columns.astype(str).str.strip()
+breadth = breadth.rename(columns=COLUMN_MAP)
+
 prices["Date"] = clean_dates(prices["Date"])
 breadth["Date"] = clean_dates(breadth["Date"])
 
-prices = prices.dropna(subset=["Date", "Symbol", "Close", "High", "Low", "Volume"])
-breadth = breadth.dropna(subset=["Date"])
+prices = prices.dropna(
+    subset=["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]
+).copy()
+
+breadth = breadth.dropna(subset=["Date"]).copy()
 
 prices = prices.sort_values(["Symbol", "Date"]).reset_index(drop=True)
 breadth = breadth.sort_values("Date").drop_duplicates("Date").reset_index(drop=True)
 
-required_price_columns = {"Date", "Symbol", "Open", "High", "Low", "Close", "Volume"}
+for column in breadth.columns:
+    if column != "Date":
+        breadth[column] = pd.to_numeric(
+            breadth[column],
+            errors="coerce",
+        )
+
+required_price_columns = {
+    "Date",
+    "Symbol",
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume",
+}
+
 missing_price_columns = required_price_columns - set(prices.columns)
 
 if missing_price_columns:
     raise ValueError(
-        "Parquet is missing these columns: "
+        "Missing required parquet columns: "
         + ", ".join(sorted(missing_price_columns))
     )
 
+print(f"Price rows loaded: {len(prices):,}")
+print(f"Breadth rows loaded: {len(breadth):,}")
+print()
+
 
 # ============================================================
-# BUILD EXISTING VCP-STYLE BREAKOUT ENTRIES
+# BUILD VCP BREAKOUT SIGNALS
 # ============================================================
 
-print("Building breakout entries...")
+print("Building VCP-style breakout entries...")
 
 prices["PrevClose"] = prices.groupby("Symbol")["Close"].shift(1)
 
-prices["TR"] = np.maximum(
+prices["TrueRange"] = np.maximum(
     prices["High"] - prices["Low"],
     np.maximum(
         (prices["High"] - prices["PrevClose"]).abs(),
@@ -149,15 +229,15 @@ prices["TR"] = np.maximum(
     ),
 )
 
-prices["ATR14"] = prices.groupby("Symbol")["TR"].transform(
+prices["ATR14"] = prices.groupby("Symbol")["TrueRange"].transform(
     lambda series: series.rolling(window=14, min_periods=5).mean()
 )
 
-prices["Volume20DAvg"] = prices.groupby("Symbol")["Volume"].transform(
+prices["Volume20Average"] = prices.groupby("Symbol")["Volume"].transform(
     lambda series: series.rolling(window=20, min_periods=5).mean()
 )
 
-prices["Close20DHigh"] = prices.groupby("Symbol")["Close"].transform(
+prices["Close20DayHigh"] = prices.groupby("Symbol")["Close"].transform(
     lambda series: series.rolling(window=20, min_periods=20).max()
 )
 
@@ -166,63 +246,71 @@ prices["VCPTightness"] = (
 ) < VCP_TIGHTNESS_LIMIT
 
 prices["VolumeSurge"] = prices["Volume"] > (
-    prices["Volume20DAvg"] * 1.5
+    prices["Volume20Average"] * 1.5
 )
 
-prices["PriorDayTight"] = prices.groupby("Symbol")["VCPTightness"].shift(1)
+prices["PriorDayTight"] = prices.groupby("Symbol")[
+    "VCPTightness"
+].shift(1)
 
 prices["IsBreakout"] = (
-    (prices["Close"] >= prices["Close20DHigh"])
+    (prices["Close"] >= prices["Close20DayHigh"])
     & prices["VolumeSurge"]
     & prices["PriorDayTight"].fillna(False)
 )
 
+print(f"Breakout entries found: {int(prices['IsBreakout'].sum()):,}")
+print()
+
 
 # ============================================================
-# CREATE TRADES
+# BACKTEST EVERY BREAKOUT
 # ============================================================
 
-print("Calculating trade outcomes...")
+print("Testing 15% target before 7% stop...")
 
 trade_records = []
 
-for symbol, stock in prices.groupby("Symbol", sort=False):
-    stock = stock.sort_values("Date").reset_index(drop=True)
+for symbol, stock_data in prices.groupby("Symbol", sort=False):
+    stock_data = stock_data.sort_values("Date").reset_index(drop=True)
 
-    breakout_indexes = stock.index[stock["IsBreakout"]].tolist()
+    breakout_indexes = stock_data.index[
+        stock_data["IsBreakout"]
+    ].tolist()
 
     for entry_index in breakout_indexes:
-        future = stock.iloc[
+        future = stock_data.iloc[
             entry_index + 1 : entry_index + 1 + MAX_HOLDING_DAYS
         ].copy()
 
+        # We need all 30 days to test a complete maximum-hold trade.
         if len(future) < MAX_HOLDING_DAYS:
             continue
 
-        entry = stock.iloc[entry_index]
+        entry = stock_data.iloc[entry_index]
         entry_price = float(entry["Close"])
 
-        result_15, decision_day_15 = first_hit(
-            future,
-            entry_price,
-            TARGET_PCT,
-            STOP_LOSS_PCT,
+        core_result, core_day = first_hit(
+            future_data=future,
+            entry_price=entry_price,
+            target_pct=TARGET_PCT,
+            stop_pct=STOP_LOSS_PCT,
         )
 
         record = {
             "Date": entry["Date"],
             "Symbol": symbol,
             "EntryPrice": entry_price,
-            "Result15Before7": result_15,
-            "DecisionDay15Before7": decision_day_15,
+            "Result15Before7": core_result,
+            "DecisionDay15Before7": core_day,
         }
 
         for target in [18, 25, 30]:
             result, day = first_hit(
-                future,
-                entry_price,
-                target,
-                STOP_LOSS_PCT,
+                future_data=future,
+                entry_price=entry_price,
+                target_pct=target,
+                stop_pct=STOP_LOSS_PCT,
             )
 
             record[f"Target{target}BeforeStop7"] = result
@@ -230,14 +318,14 @@ for symbol, stock in prices.groupby("Symbol", sort=False):
 
         for holding_day in [5, 10, 15, 20, 30]:
             record[f"CloseReturn{holding_day}D"] = (
-                float(stock.iloc[entry_index + holding_day]["Close"])
+                float(stock_data.iloc[entry_index + holding_day]["Close"])
                 / entry_price
                 - 1
             ) * 100
 
-        if result_15 == "SUCCESS":
+        if core_result == "SUCCESS":
             record["RuleBasedReturn"] = TARGET_PCT
-        elif result_15 == "STOPPED_OUT":
+        elif core_result == "STOPPED_OUT":
             record["RuleBasedReturn"] = -STOP_LOSS_PCT
         else:
             record["RuleBasedReturn"] = (
@@ -249,14 +337,17 @@ for symbol, stock in prices.groupby("Symbol", sort=False):
 trades = pd.DataFrame(trade_records)
 
 if trades.empty:
-    raise ValueError("No completed 30-day breakout trade records were created.")
+    raise ValueError("No completed breakout trades were created.")
+
+print(f"Completed breakout trades: {len(trades):,}")
+print()
 
 
 # ============================================================
-# PREPARE AND MERGE BREADTH DATA
+# ATTACH BREADTH DATA
 # ============================================================
 
-print("Merging market-breadth features...")
+print("Attaching market-breadth data to each trade...")
 
 if {"T3Breakouts", "T3Wins"}.issubset(breadth.columns):
     breadth["FollowThroughRate"] = np.where(
@@ -266,9 +357,7 @@ if {"T3Breakouts", "T3Wins"}.issubset(breadth.columns):
     )
 
 available_features = [
-    feature
-    for feature in FEATURES
-    if feature in breadth.columns
+    feature for feature in FEATURES if feature in breadth.columns
 ]
 
 breadth_for_merge = breadth[
@@ -281,52 +370,36 @@ trades = trades.merge(
     how="left",
 )
 
-merge_coverage = (
-    trades[available_features].notna().any(axis=1).mean() * 100
-    if available_features
-    else 0
-)
-
 usable_features = [
     feature
     for feature in available_features
     if trades[feature].notna().sum() >= 100
 ]
 
+merge_coverage = (
+    trades[usable_features].notna().any(axis=1).mean() * 100
+    if usable_features
+    else 0
+)
+
+print(f"Available breadth features: {len(available_features)}")
+print(f"Usable breadth features: {len(usable_features)}")
+print(f"Breadth merge coverage: {merge_coverage:.2f}%")
+print()
+
 
 # ============================================================
-# WRITE INPUT AUDIT FIRST
+# INPUT AUDIT
 # ============================================================
 
 audit_rows = [
-    {
-        "Item": "Price parquet rows",
-        "Value": len(prices),
-    },
-    {
-        "Item": "Breadth CSV rows",
-        "Value": len(breadth),
-    },
-    {
-        "Item": "Completed breakout trade records",
-        "Value": len(trades),
-    },
-    {
-        "Item": "Price data first date",
-        "Value": prices["Date"].min(),
-    },
-    {
-        "Item": "Price data last date",
-        "Value": prices["Date"].max(),
-    },
-    {
-        "Item": "Breadth data first date",
-        "Value": breadth["Date"].min(),
-    },
-    {
-        "Item": "Breadth data last date",
-        "Value": breadth["Date"].max(),
-    },
+    {"Item": "Price parquet rows", "Value": len(prices)},
+    {"Item": "Breadth CSV rows", "Value": len(breadth)},
+    {"Item": "Completed breakout trade records", "Value": len(trades)},
+    {"Item": "Price data first date", "Value": prices["Date"].min()},
+    {"Item": "Price data last date", "Value": prices["Date"].max()},
+    {"Item": "Breadth data first date", "Value": breadth["Date"].min()},
+    {"Item": "Breadth data last date", "Value": breadth["Date"].max()},
     {
         "Item": "Available breadth features",
         "Value": len(available_features),
@@ -344,69 +417,77 @@ audit_rows = [
 for feature in available_features:
     audit_rows.append(
         {
-            "Item": f"Non-empty trade rows for {feature}",
+            "Item": f"Available rows for {feature}",
             "Value": int(trades[feature].notna().sum()),
         }
     )
 
 audit = pd.DataFrame(audit_rows)
-safe_write_csv(audit, OUTPUT_AUDIT)
+safe_csv(audit, OUTPUT_AUDIT)
 
 trades.to_csv(OUTPUT_TRADES, index=False)
 
-print(f"Available features: {len(available_features)}")
-print(f"Usable features: {len(usable_features)}")
-print(f"Breadth merge coverage: {merge_coverage:.2f}%")
-
 
 # ============================================================
-# FEATURE BUCKETS AND FEATURE RANKINGS
+# FEATURE BUCKET TESTS
 # ============================================================
+
+print("Ranking individual market features...")
 
 bucket_rows = []
 ranking_rows = []
 
 for feature in usable_features:
-    valid = trades.dropna(subset=[feature]).copy()
+    data = trades.dropna(subset=[feature]).copy()
 
     try:
-        valid["Bucket"] = pd.qcut(
-            valid[feature].rank(method="first"),
+        data["Bucket"] = pd.qcut(
+            data[feature].rank(method="first"),
             q=3,
             labels=["Low", "Medium", "High"],
         )
     except ValueError:
         continue
 
-    low_group = valid[valid["Bucket"] == "Low"]
-    high_group = valid[valid["Bucket"] == "High"]
-
-    high_success = (
-        high_group["Result15Before7"] == "SUCCESS"
-    ).mean() * 100
+    low_group = data[data["Bucket"] == "Low"]
+    high_group = data[data["Bucket"] == "High"]
 
     low_success = (
         low_group["Result15Before7"] == "SUCCESS"
     ).mean() * 100
 
+    high_success = (
+        high_group["Result15Before7"] == "SUCCESS"
+    ).mean() * 100
+
+    low_rule_return = low_group["RuleBasedReturn"].mean()
+    high_rule_return = high_group["RuleBasedReturn"].mean()
+
+    # For downside counts, low values are better.
     if feature in DOWNSIDE_FEATURES:
-        lift = low_success - high_success
+        success_lift = low_success - high_success
+        rule_return_lift = low_rule_return - high_rule_return
     else:
-        lift = high_success - low_success
+        success_lift = high_success - low_success
+        rule_return_lift = high_rule_return - low_rule_return
 
     ranking_rows.append(
         {
             "Feature": feature,
-            "Trades": len(valid),
+            "Trades": len(data),
             "LowSuccess15Before7Pct": low_success,
             "HighSuccess15Before7Pct": high_success,
-            "SuccessLiftPct": lift,
-            "LowRuleBasedReturnPct": low_group["RuleBasedReturn"].mean(),
-            "HighRuleBasedReturnPct": high_group["RuleBasedReturn"].mean(),
+            "SuccessLiftPct": success_lift,
+            "LowRuleBasedReturnPct": low_rule_return,
+            "HighRuleBasedReturnPct": high_rule_return,
+            "RuleReturnLiftPct": rule_return_lift,
         }
     )
 
-    for bucket_name, group in valid.groupby("Bucket", observed=False):
+    for bucket_name, group in data.groupby(
+        "Bucket",
+        observed=False,
+    ):
         bucket_rows.append(
             {
                 "Feature": feature,
@@ -427,9 +508,15 @@ for feature in usable_features:
                 "Target30BeforeStop7Pct": (
                     group["Target30BeforeStop7"] == "SUCCESS"
                 ).mean() * 100,
-                "Average10DayReturnPct": group["CloseReturn10D"].mean(),
-                "Average20DayReturnPct": group["CloseReturn20D"].mean(),
-                "AverageRuleBasedReturnPct": group["RuleBasedReturn"].mean(),
+                "Average10DayReturnPct": group[
+                    "CloseReturn10D"
+                ].mean(),
+                "Average20DayReturnPct": group[
+                    "CloseReturn20D"
+                ].mean(),
+                "AverageRuleBasedReturnPct": group[
+                    "RuleBasedReturn"
+                ].mean(),
             }
         )
 
@@ -463,20 +550,21 @@ if rankings.empty:
             "SuccessLiftPct",
             "LowRuleBasedReturnPct",
             "HighRuleBasedReturnPct",
+            "RuleReturnLiftPct",
         ]
     )
 else:
     rankings = rankings.sort_values(
-        "SuccessLiftPct",
+        ["SuccessLiftPct", "RuleReturnLiftPct"],
         ascending=False,
     )
 
-safe_write_csv(buckets.round(3), OUTPUT_BUCKETS)
-safe_write_csv(rankings.round(3), OUTPUT_RANKINGS)
+safe_csv(buckets.round(3), OUTPUT_BUCKETS)
+safe_csv(rankings.round(3), OUTPUT_RANKINGS)
 
 
 # ============================================================
-# BUILD CANDIDATE COMPOSITE SCORES
+# TEST COMPOSITE-SCORE MODELS
 # ============================================================
 
 print("Testing composite-score candidates...")
@@ -485,51 +573,48 @@ candidate_rows = []
 walkforward_rows = []
 
 if not rankings.empty:
-    top_features = rankings["Feature"].head(8).tolist()
+    positive_features = rankings[
+        rankings["SuccessLiftPct"] > 0
+    ]["Feature"].tolist()
 
-    candidate_mixes = {
-        "Top_3_equal": top_features[:3],
-        "Top_4_equal": top_features[:4],
-        "Top_5_equal": top_features[:5],
-        "Top_6_equal": top_features[:6],
-    }
+    top_features = positive_features[:8]
+
+    candidate_models = {}
+
+    for number_of_features in [3, 4, 5, 6]:
+        if len(top_features) >= number_of_features:
+            candidate_models[
+                f"Top_{number_of_features}_Equal"
+            ] = top_features[:number_of_features]
 
     for size in [3, 4, 5]:
         for combo in combinations(top_features[:7], size):
-            name = "Mix_" + "_".join(combo)
-            candidate_mixes[name] = list(combo)
+            model_name = "Mix_" + "_".join(combo)
+            candidate_models[model_name] = list(combo)
 
-    for model_name, model_features in candidate_mixes.items():
-        model_features = [
-            feature
-            for feature in model_features
-            if feature in usable_features
-        ]
-
+    for model_name, model_features in candidate_models.items():
         if len(model_features) < 2:
             continue
 
-        score = pd.Series(0.0, index=trades.index)
+        work = trades.copy()
+        composite = pd.Series(0.0, index=work.index)
 
         for feature in model_features:
-            normalized = percentile_rank(
-                trades[feature].fillna(trades[feature].median())
+            feature_score = percentile_score(
+                work[feature].fillna(work[feature].median())
             )
 
             if feature in DOWNSIDE_FEATURES:
-                normalized = 100 - normalized
+                feature_score = 100 - feature_score
 
-            score = score + normalized
+            composite = composite + feature_score
 
-        score = score / len(model_features)
-
-        temporary = trades.copy()
-        temporary["CompositeScore"] = score
+        work["CompositeScore"] = composite / len(model_features)
 
         for threshold in [50, 55, 60, 65, 70, 75, 80]:
-            selected = temporary[
-                temporary["CompositeScore"] >= threshold
-            ]
+            selected = work[
+                work["CompositeScore"] >= threshold
+            ].copy()
 
             if len(selected) < 100:
                 continue
@@ -555,29 +640,34 @@ if not rankings.empty:
                 }
             )
 
-            unique_dates = sorted(temporary["Date"].dropna().unique())
+            # Chronological walk-forward test:
+            # score is calculated from data available on each entry date;
+            # results are evaluated in later sequential periods.
+            unique_dates = sorted(work["Date"].dropna().unique())
 
             if len(unique_dates) < 100:
                 continue
 
-            split_count = 5
-            split_size = len(unique_dates) // split_count
+            number_of_folds = 5
+            fold_size = len(unique_dates) // number_of_folds
 
-            for fold in range(1, split_count):
-                train_end = unique_dates[split_size * fold - 1]
+            for fold_number in range(1, number_of_folds):
+                train_end = unique_dates[fold_size * fold_number - 1]
+
                 test_end_index = min(
-                    split_size * (fold + 1) - 1,
+                    fold_size * (fold_number + 1) - 1,
                     len(unique_dates) - 1,
                 )
+
                 test_end = unique_dates[test_end_index]
 
-                test = temporary[
-                    (temporary["Date"] > train_end)
-                    & (temporary["Date"] <= test_end)
-                    & (temporary["CompositeScore"] >= threshold)
-                ]
+                test_data = work[
+                    (work["Date"] > train_end)
+                    & (work["Date"] <= test_end)
+                    & (work["CompositeScore"] >= threshold)
+                ].copy()
 
-                if len(test) < 50:
+                if len(test_data) < 50:
                     continue
 
                 walkforward_rows.append(
@@ -585,20 +675,20 @@ if not rankings.empty:
                         "Model": model_name,
                         "Features": " | ".join(model_features),
                         "Threshold": threshold,
-                        "Fold": fold,
+                        "Fold": fold_number,
                         "TrainEnd": train_end,
                         "TestEnd": test_end,
-                        "Trades": len(test),
+                        "Trades": len(test_data),
                         "Success15Before7Pct": (
-                            test["Result15Before7"] == "SUCCESS"
+                            test_data["Result15Before7"] == "SUCCESS"
                         ).mean() * 100,
                         "Stop7Before15Pct": (
-                            test["Result15Before7"] == "STOPPED_OUT"
+                            test_data["Result15Before7"] == "STOPPED_OUT"
                         ).mean() * 100,
-                        "AverageRuleBasedReturnPct": test[
+                        "AverageRuleBasedReturnPct": test_data[
                             "RuleBasedReturn"
                         ].mean(),
-                        "Average20DayReturnPct": test[
+                        "Average20DayReturnPct": test_data[
                             "CloseReturn20D"
                         ].mean(),
                     }
@@ -638,17 +728,17 @@ if walkforward.empty:
         ]
     )
 
-safe_write_csv(candidates.round(3), OUTPUT_CANDIDATES)
-safe_write_csv(walkforward.round(3), OUTPUT_WALKFORWARD)
+safe_csv(candidates.round(3), OUTPUT_CANDIDATES)
+safe_csv(walkforward.round(3), OUTPUT_WALKFORWARD)
 
 
 # ============================================================
-# CHOOSE BEST WALK-FORWARD MODEL
+# SELECT THE BEST WALK-FORWARD MODEL
 # ============================================================
 
 best_model_name = "No valid model"
-best_threshold = np.nan
 best_features = []
+best_threshold = np.nan
 
 if not walkforward.empty:
     walkforward_summary = (
@@ -661,7 +751,7 @@ if not walkforward.empty:
             TotalTrades=("Trades", "sum"),
             AverageSuccessPct=("Success15Before7Pct", "mean"),
             AverageStopPct=("Stop7Before15Pct", "mean"),
-            AverageRuleReturnPct=(
+            AverageRuleBasedReturnPct=(
                 "AverageRuleBasedReturnPct",
                 "mean",
             ),
@@ -678,10 +768,12 @@ if not walkforward.empty:
     ].copy()
 
     if not walkforward_summary.empty:
+        # Higher success and return is good.
+        # Higher stop rate is bad.
         walkforward_summary["QualityScore"] = (
-            walkforward_summary["AverageRuleReturnPct"]
-            + walkforward_summary["AverageSuccessPct"] * 0.05
-            - walkforward_summary["AverageStopPct"] * 0.03
+            walkforward_summary["AverageRuleBasedReturnPct"]
+            + 0.05 * walkforward_summary["AverageSuccessPct"]
+            - 0.03 * walkforward_summary["AverageStopPct"]
         )
 
         walkforward_summary = walkforward_summary.sort_values(
@@ -689,61 +781,56 @@ if not walkforward.empty:
             ascending=False,
         )
 
-        best = walkforward_summary.iloc[0]
-        best_model_name = best["Model"]
-        best_threshold = best["Threshold"]
-        best_features = best["Features"].split(" | ")
+        best_row = walkforward_summary.iloc[0]
 
-        safe_write_csv(
+        best_model_name = best_row["Model"]
+        best_features = best_row["Features"].split(" | ")
+        best_threshold = best_row["Threshold"]
+
+        safe_csv(
             walkforward_summary.round(3),
             OUTPUT_WALKFORWARD,
         )
 
 
 # ============================================================
-# DAILY FINAL SCORE AND ACTION ZONES
+# DAILY COMPOSITE SCORE AND ACTION ZONES
 # ============================================================
 
-daily_features = breadth_for_merge.copy()
+daily_score = breadth_for_merge.copy()
 
 if best_features:
-    daily_score = pd.Series(
-        0.0,
-        index=daily_features.index,
-    )
-
-    valid_feature_count = 0
+    score = pd.Series(0.0, index=daily_score.index)
+    feature_count = 0
 
     for feature in best_features:
-        if feature not in daily_features.columns:
+        if feature not in daily_score.columns:
             continue
 
-        normalized = percentile_rank(
-            daily_features[feature].fillna(
-                daily_features[feature].median()
+        feature_score = percentile_score(
+            daily_score[feature].fillna(
+                daily_score[feature].median()
             )
         )
 
         if feature in DOWNSIDE_FEATURES:
-            normalized = 100 - normalized
+            feature_score = 100 - feature_score
 
-        daily_score = daily_score + normalized
-        valid_feature_count += 1
+        score = score + feature_score
+        feature_count += 1
 
-    if valid_feature_count > 0:
-        daily_features["CompositeScore"] = (
-            daily_score / valid_feature_count
-        )
+    if feature_count > 0:
+        daily_score["CompositeScore"] = score / feature_count
     else:
-        daily_features["CompositeScore"] = np.nan
+        daily_score["CompositeScore"] = np.nan
 else:
-    daily_features["CompositeScore"] = np.nan
+    daily_score["CompositeScore"] = np.nan
 
-daily_features["BestModel"] = best_model_name
-daily_features["RecommendedThreshold"] = best_threshold
+daily_score["BestModel"] = best_model_name
+daily_score["RecommendedThreshold"] = best_threshold
 
-daily_features["ActionZone"] = pd.cut(
-    daily_features["CompositeScore"],
+daily_score["ActionZone"] = pd.cut(
+    daily_score["CompositeScore"],
     bins=[-1, 35, 50, 65, 80, 101],
     labels=[
         "Risk-off",
@@ -754,14 +841,16 @@ daily_features["ActionZone"] = pd.cut(
     ],
 )
 
-safe_write_csv(
-    daily_features.round(3),
-    OUTPUT_DAILY_SCORE,
-)
+safe_csv(daily_score.round(3), OUTPUT_DAILY_SCORE)
+
+
+# ============================================================
+# ACTION-ZONE BACKTEST
+# ============================================================
 
 if best_features:
     trade_scores = trades.merge(
-        daily_features[
+        daily_score[
             ["Date", "CompositeScore", "ActionZone"]
         ],
         on="Date",
@@ -769,15 +858,15 @@ if best_features:
     )
 
     zones = (
-        trade_scores.groupby("ActionZone", observed=False)
+        trade_scores.groupby(
+            "ActionZone",
+            observed=False,
+        )
         .agg(
             Trades=("Symbol", "count"),
             Success15Before7Pct=(
                 "Result15Before7",
-                lambda values: (
-                    values == "SUCCESS"
-                ).mean()
-                * 100,
+                lambda values: (values == "SUCCESS").mean() * 100,
             ),
             Stop7Before15Pct=(
                 "Result15Before7",
@@ -809,71 +898,72 @@ else:
         ]
     )
 
-safe_write_csv(
-    zones.round(3),
-    OUTPUT_ZONES,
-)
+safe_csv(zones.round(3), OUTPUT_ZONES)
 
 
 # ============================================================
 # FINAL SUMMARY
 # ============================================================
 
-summary_rows = [
-    {
-        "Metric": "Completed breakout trades",
-        "Value": len(trades),
-    },
-    {
-        "Metric": "Overall 15% before 7% success rate (%)",
-        "Value": (
-            trades["Result15Before7"] == "SUCCESS"
-        ).mean()
-        * 100,
-    },
-    {
-        "Metric": "Overall 7% stop before 15% rate (%)",
-        "Value": (
-            trades["Result15Before7"] == "STOPPED_OUT"
-        ).mean()
-        * 100,
-    },
-    {
-        "Metric": "Overall average rule-based return (%)",
-        "Value": trades["RuleBasedReturn"].mean(),
-    },
-    {
-        "Metric": "Available breadth features",
-        "Value": len(available_features),
-    },
-    {
-        "Metric": "Usable breadth features",
-        "Value": len(usable_features),
-    },
-    {
-        "Metric": "Breadth merge coverage (%)",
-        "Value": merge_coverage,
-    },
-    {
-        "Metric": "Best walk-forward model",
-        "Value": best_model_name,
-    },
-    {
-        "Metric": "Best model features",
-        "Value": " | ".join(best_features),
-    },
-    {
-        "Metric": "Best model score threshold",
-        "Value": best_threshold,
-    },
-]
+summary = pd.DataFrame(
+    [
+        {
+            "Metric": "Completed breakout trades",
+            "Value": len(trades),
+        },
+        {
+            "Metric": "Overall 15% before 7% success rate (%)",
+            "Value": (
+                trades["Result15Before7"] == "SUCCESS"
+            ).mean()
+            * 100,
+        },
+        {
+            "Metric": "Overall 7% stop before 15% rate (%)",
+            "Value": (
+                trades["Result15Before7"] == "STOPPED_OUT"
+            ).mean()
+            * 100,
+        },
+        {
+            "Metric": "Overall average rule-based return (%)",
+            "Value": trades["RuleBasedReturn"].mean(),
+        },
+        {
+            "Metric": "Available breadth features",
+            "Value": len(available_features),
+        },
+        {
+            "Metric": "Usable breadth features",
+            "Value": len(usable_features),
+        },
+        {
+            "Metric": "Breadth merge coverage (%)",
+            "Value": merge_coverage,
+        },
+        {
+            "Metric": "Best walk-forward model",
+            "Value": best_model_name,
+        },
+        {
+            "Metric": "Best model features",
+            "Value": " | ".join(best_features),
+        },
+        {
+            "Metric": "Best model score threshold",
+            "Value": best_threshold,
+        },
+    ]
+)
 
-summary = pd.DataFrame(summary_rows)
-safe_write_csv(summary.round(3), OUTPUT_SUMMARY)
+safe_csv(summary.round(3), OUTPUT_SUMMARY)
 
 print()
-print("RESEARCH BACKTEST COMPLETE")
-print(f"Breakout trades: {len(trades):,}")
+print("=" * 70)
+print("RESEARCH BACKTEST COMPLETED")
+print("=" * 70)
+print(f"Completed breakout trades: {len(trades):,}")
 print(f"Usable breadth features: {len(usable_features)}")
-print(f"Best model: {best_model_name}")
-print("All outputs are saved in the Research folder.")
+print(f"Best composite model: {best_model_name}")
+print(f"Recommended threshold: {best_threshold}")
+print("All research CSVs have been updated in the Research folder.")
