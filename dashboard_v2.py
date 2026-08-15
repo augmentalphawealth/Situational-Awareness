@@ -304,7 +304,6 @@ with t_sel2:
     timeframe = st.radio("Chart Lookback Window:", ["3M", "6M", "1Y", "3Y", "Max"], horizontal=True, index=2)
 tf_map = {"3M": 63, "6M": 126, "1Y": 252, "3Y": 756, "Max": len(df_filtered)}
 df_view = df_filtered.tail(tf_map.get(timeframe, 252))
-last_date = df_view['Date'].iloc[-1]
 
 # ==============================================================================
 # PANEL 1: CURRENT MARKET ENVIRONMENT (TREND & HEALTH)
@@ -349,23 +348,20 @@ with p1_c4:
 with st.container(border=True):
     st.markdown("<div class='card-title' style='font-size: 18px;'>📈 Trend Breadth (Stocks above Moving Averages)</div>", unsafe_allow_html=True)
     st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Shows what % of the market is in short (20), medium (50), and long-term (200) uptrends. Bull markets stay above 50%.</div>", unsafe_allow_html=True)
-    fig_ema = go.Figure()
     
     val_200 = df_view['Pct_Above_200_EMA'].iloc[-1]
     val_50 = df_view['Pct_Above_50_EMA'].iloc[-1]
     val_20 = df_view['Pct_Above_20_EMA'].iloc[-1]
+    
+    st.markdown(f"<div style='font-size: 15px; font-weight: 800; margin-bottom: 5px; padding-left: 5px;'>Live Readings: <span style='color:#22c55e;'>200 EMA: {val_200:.1f}%</span> &nbsp; | &nbsp; <span style='color:#f97316;'>50 EMA: {val_50:.1f}%</span> &nbsp; | &nbsp; <span style='color:#06b6d4;'>20 EMA: {val_20:.1f}%</span></div>", unsafe_allow_html=True)
 
-    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_200_EMA'], name='% > 200 EMA (Long Term)', line=dict(color='#22c55e', width=3.5)))
-    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_50_EMA'], name='% > 50 EMA (Medium Term)', line=dict(color='#f97316', width=3)))
-    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_20_EMA'], name='% > 20 EMA (Short Term)', line=dict(color='#06b6d4', width=2.5)))
+    fig_ema = go.Figure()
+    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_200_EMA'], name='% > 200 EMA', line=dict(color='#22c55e', width=3.5)))
+    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_50_EMA'], name='% > 50 EMA', line=dict(color='#f97316', width=3)))
+    fig_ema.add_trace(go.Scatter(x=df_view['Date'], y=df_view['Pct_Above_20_EMA'], name='% > 20 EMA', line=dict(color='#06b6d4', width=2.5)))
     fig_ema.add_hline(y=50, line_dash="dash", line_color="#94a3b8", line_width=2)
     
-    # Adding visible latest reading annotations
-    fig_ema.add_annotation(x=last_date, y=val_200, text=f"<b>{val_200:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#22c55e', size=14))
-    fig_ema.add_annotation(x=last_date, y=val_50, text=f"<b>{val_50:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#f97316', size=14))
-    fig_ema.add_annotation(x=last_date, y=val_20, text=f"<b>{val_20:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#06b6d4', size=14))
-
-    fig_ema.update_layout(height=360, font=dict(size=14), margin=dict(l=10, r=50, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), plot_bgcolor="white", paper_bgcolor="white")
+    fig_ema.update_layout(height=360, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), plot_bgcolor="white", paper_bgcolor="white")
     fig_ema.update_xaxes(showgrid=False)
     fig_ema.update_yaxes(range=[0, 100], showgrid=True, gridcolor='#f1f5f9')
     st.plotly_chart(fig_ema, use_container_width=True)
@@ -416,19 +412,18 @@ with st.container(border=True):
 with st.container(border=True):
     st.markdown("<div class='card-title' style='font-size: 18px;'>🏢 Liquidity Divergence (% > 50 EMA)</div>", unsafe_allow_html=True)
     st.markdown("<div class='chart-explainer'>💡 <b>How to read:</b> Micro liquidity stocks usually top out first. If Top 100 Liq are high but Micro Liq plunge, institutional money is secretly selling the broader market while propping up the index.</div>", unsafe_allow_html=True)
-    fig_cap = go.Figure()
     
     val_l50 = df_view.get('Large_Pct_50_EMA', pd.Series([0], dtype=float)).iloc[-1]
     val_mi50 = df_view.get('Micro_Pct_50_EMA', pd.Series([0], dtype=float)).iloc[-1]
+    
+    st.markdown(f"<div style='font-size: 15px; font-weight: 800; margin-bottom: 5px; padding-left: 5px;'>Live Readings: <span style='color:#2563eb;'>Top 100 Liq: {val_l50:.1f}%</span> &nbsp; | &nbsp; <span style='color:#ef4444;'>Micro Liq: {val_mi50:.1f}%</span></div>", unsafe_allow_html=True)
 
+    fig_cap = go.Figure()
     fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Large_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Top 100 Liq', line=dict(color='#2563eb', width=3.5)))
     fig_cap.add_trace(go.Scatter(x=df_view['Date'], y=df_view.get('Micro_Pct_50_EMA', pd.Series(dtype=float)), mode='lines', name='Micro Liq', line=dict(color='#ef4444', width=3, dash='dot')))
     fig_cap.add_hline(y=50, line_dash="dash", line_color="#cbd5e1", line_width=2)
     
-    fig_cap.add_annotation(x=last_date, y=val_l50, text=f"<b>{val_l50:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#2563eb', size=14))
-    fig_cap.add_annotation(x=last_date, y=val_mi50, text=f"<b>{val_mi50:.1f}%</b>", showarrow=False, xanchor='left', xshift=8, font=dict(color='#ef4444', size=14))
-
-    fig_cap.update_layout(height=350, font=dict(size=14), margin=dict(l=10, r=50, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor="white", paper_bgcolor="white")
+    fig_cap.update_layout(height=350, font=dict(size=14), margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor="white", paper_bgcolor="white")
     fig_cap.update_xaxes(showgrid=False)
     fig_cap.update_yaxes(range=[0, 100], showgrid=True, gridcolor='#f1f5f9')
     st.plotly_chart(fig_cap, use_container_width=True)
