@@ -122,6 +122,7 @@ df_live = load_intraday_data()
 is_live_active = False
 live_advances = 0
 live_declines = 0
+live_latest = {}
 last_sync_display = last_sync_time
 
 if not df_live.empty and 'Date' in df_live.columns:
@@ -454,7 +455,10 @@ declines = int(latest.get('Declines', 0))
 if is_live_active and st.session_state.analysis_date == max_date:
     advances = live_advances
     declines = live_declines
-    total_univ = advances + declines
+    
+    # ✅ FIX: Inherit the EOD total universe, or pull from live_latest if available
+    total_univ = int(live_latest.get('Total_Universe', latest.get('Total_Universe', 2400))) 
+    
     ist_offset_local = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     actual_date_str = f"{datetime.datetime.now(ist_offset_local).strftime('%d %b %Y')} <span style='color:#eab308; font-weight:800;'>(⚡ LIVE INTRADAY)</span>"
 
@@ -785,3 +789,4 @@ with bot_col:
             st.session_state.sync_start_time = time.time()
             st.session_state.pre_sync_time = last_sync_display
             st.rerun()
+
