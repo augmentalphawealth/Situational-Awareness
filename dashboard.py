@@ -789,4 +789,3 @@ with bot_col:
             st.session_state.sync_start_time = time.time()
             st.session_state.pre_sync_time = last_sync_display
             st.rerun()
-
