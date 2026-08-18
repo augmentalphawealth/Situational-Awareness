@@ -7,6 +7,7 @@ import time
 import pyotp
 from kiteconnect import KiteConnect
 from urllib.parse import urlparse, parse_qs
+from fetch_6yr_history import rebuild_database
 
 api_key = os.environ.get("KITE_API_KEY")
 api_secret = os.environ.get("KITE_API_SECRET")
@@ -14,7 +15,7 @@ user_id = os.environ.get("KITE_USER_ID")
 password = os.environ.get("KITE_PASSWORD")
 totp_secret = os.environ.get("KITE_TOTP")
 
-print("Logging in to Zerodha for EOD Batch Sync...")
+print("Logging in to Zerodha for EOD Batch Sync & Delta Check...")
 try:
     kite = KiteConnect(api_key=api_key)
     session = requests.Session()
@@ -23,34 +24,30 @@ try:
     
     totp_token = pyotp.TOTP(totp_secret).now()
     session.post("https://kite.zerodha.com/api/twofa", data={
-        "user_id": user_id, 
-        "request_id": request_id, 
-        "twofa_value": totp_token, 
-        "twofa_type": "totp"
+        "user_id": user_id, "request_id": request_id, 
+        "twofa_value": totp_token, "twofa_type": "totp"
     })
     login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
     redirect_res = session.get(login_url, allow_redirects=True)
     request_token = parse_qs(urlparse(redirect_res.url).query)["request_token"][0]
     data = kite.generate_session(request_token, api_secret=api_secret)
     kite.set_access_token(data["access_token"])
-    print("✅ Zerodha Authentication Successful.")
 except Exception as e:
     print("❌ Error logging in:", e)
     sys.exit(1)
 
-# Market Status Verification
-current_time = datetime.datetime.now().time()
-settlement_time = datetime.time(16, 0)
-if current_time < settlement_time:
-    print("⚠️ WARNING: It is before 4:00 PM IST. Post-CAS settlement might not be final.")
-
 parquet_file = "nse_6yr_historical.parquet"
 if not os.path.exists(parquet_file):
-    print("❌ Parquet database not found.")
-    sys.exit(1)
+    print("❌ Parquet database not found. Initiating first-time rebuild...")
+    rebuild_database()
+    sys.exit(0)
 
+print("Loading historical database for Delta Check...")
 df_hist = pd.read_parquet(parquet_file)
 unique_symbols = df_hist['Symbol'].unique()
+
+# Map the last known Close price for every symbol in our database
+last_closes = df_hist.groupby('Symbol').tail(1).set_index('Symbol')['Close'].to_dict()
 
 kite_symbols = [f"NSE:{sym}" for sym in unique_symbols]
 chunk_size = 200
@@ -58,15 +55,33 @@ chunks = [kite_symbols[i:i + chunk_size] for i in range(0, len(kite_symbols), ch
 
 today_str = datetime.datetime.now().strftime("%Y-%m-%d")
 new_rows = []
+trigger_rebuild = False
 
-print(f"Fetching EOD snapshots for {len(kite_symbols)} stocks...")
+print(f"Fetching EOD snapshots and verifying Deltas for {len(kite_symbols)} stocks...")
 for chunk in chunks:
+    if trigger_rebuild: 
+        break
+        
     for attempt in range(5):
         try:
             res = kite.quote(chunk)
             if res:
                 for symbol, data in res.items():
                     clean_symbol = symbol.replace("NSE:", "")
+                    
+                    # --- THE DELTA CHECK LOGIC ---
+                    stored_prev_close = last_closes.get(clean_symbol)
+                    actual_exchange_prev_close = data['ohlc']['close']
+                    
+                    if stored_prev_close and actual_exchange_prev_close > 0:
+                        diff_pct = abs(stored_prev_close - actual_exchange_prev_close) / stored_prev_close
+                        if diff_pct > 0.02: # If discrepancy > 2%, a corporate action occurred
+                            print(f"\n🚨 CORPORATE ACTION DETECTED FOR {clean_symbol}!")
+                            print(f"Stored Close: {stored_prev_close} | Exchange Adjusted Close: {actual_exchange_prev_close}")
+                            trigger_rebuild = True
+                            break
+                    
+                    # If no mismatch, prepare standard EOD row
                     new_rows.append({
                         "Date": today_str,
                         "Open": data['ohlc']['open'],
@@ -81,6 +96,14 @@ for chunk in chunks:
             time.sleep(2)
     time.sleep(0.4)
 
+# --- ACTION HANDLING ---
+if trigger_rebuild:
+    print("\n⚠️ Database integrity compromised due to split/bonus. Wiping database and initiating full rebuild...\n")
+    rebuild_database()
+    print("✅ Automated Rebuild Complete. EOD Sync terminating.")
+    sys.exit(0)
+
+# If no corporate action detected, proceed with standard lightweight append
 if new_rows:
     new_eod_df = pd.DataFrame(new_rows)
     new_eod_df['Date'] = pd.to_datetime(new_eod_df['Date']).dt.normalize()
@@ -91,7 +114,7 @@ if new_rows:
     
     combined = pd.concat([df_hist, new_eod_df], ignore_index=True)
     combined.to_parquet(parquet_file, index=False)
-    print(f"✅ Final EOD Database updated! ({len(new_rows)} stocks saved)")
+    print(f"✅ Final EOD Database updated cleanly. No splits detected. ({len(new_rows)} stocks saved)")
     
     print("Triggering Math Engine (analyze_6yr_data.py)...")
     os.system("python analyze_6yr_data.py")
