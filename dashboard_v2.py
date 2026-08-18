@@ -174,14 +174,7 @@ def load_agg_data():
 
 df_agg = load_agg_data()
 if df_agg.empty:
-    st.error(f"Data file '{HISTORICAL_FILE}' not found. Run EOD script.")
-    st.stop()
-
-required_backend_cols = ['Rolling_3D_Up_4', 'Rolling_3D_Down_4', 'Up_25_1M_Count', 'Down_25_1M_Count', 'Net_52W_High_Low', 'Volume_Ratio', 'Pct_Above_20_EMA', 'Pct_Above_50_EMA', 'Pct_Above_200_EMA']
-missing_cols = [col for col in required_backend_cols if col not in df_agg.columns]
-if missing_cols:
-    st.error("🛑 CRITICAL BACKEND ERROR: Missing Data Columns")
-    st.warning(f"The following columns are missing from your loaded CSV:\n\n**{', '.join(missing_cols)}**")
+    st.error(f"Data file '{HISTORICAL_FILE}' not found. Please check GitHub database.")
     st.stop()
 
 # -------------------------------------------------------------------
@@ -215,26 +208,26 @@ def calculate_vcp_composite_score(latest_row, history_df):
     
     hist_tail = history_df.tail(126)
     net_4d_curr = (latest_row.get('Rolling_3D_Up_4', 0) or 0) - (latest_row.get('Rolling_3D_Down_4', 0) or 0)
-    net_4d_hist = (hist_tail['Rolling_3D_Up_4'] - hist_tail['Rolling_3D_Down_4']).dropna()
+    net_4d_hist = (hist_tail.get('Rolling_3D_Up_4', 0) - hist_tail.get('Rolling_3D_Down_4', 0)).dropna()
     p_rank_4d = (net_4d_hist < net_4d_curr).mean() if len(net_4d_hist) > 0 else 0.5
     b3_thrust = p_rank_4d * 10.0
     
     net_25m_curr = (latest_row.get('Up_25_1M_Count', 0) or 0) - (latest_row.get('Down_25_1M_Count', 0) or 0)
-    net_25m_hist = (hist_tail['Up_25_1M_Count'] - hist_tail['Down_25_1M_Count']).dropna()
+    net_25m_hist = (hist_tail.get('Up_25_1M_Count', 0) - hist_tail.get('Down_25_1M_Count', 0)).dropna()
     p_rank_25m = (net_25m_hist < net_25m_curr).mean() if len(net_25m_hist) > 0 else 0.5
     b3_movers = p_rank_25m * 10.0
     b3 = b3_thrust + b3_movers
     
     if vol_ratio < 1.0: b4_vol = 0
     else:
-        vol_hist = hist_tail['Volume_Ratio'].dropna()
+        vol_hist = hist_tail.get('Volume_Ratio', pd.Series()).dropna()
         p_rank_vol = (vol_hist < vol_ratio).mean() if len(vol_hist) > 0 else 0.5
         b4_vol = p_rank_vol * 10.0
         
     net_hl = latest_row.get('Net_52W_High_Low', 0) or 0
     if net_hl < 0: b4_hl = 0
     else:
-        hl_hist = hist_tail['Net_52W_High_Low'].dropna()
+        hl_hist = hist_tail.get('Net_52W_High_Low', pd.Series()).dropna()
         p_rank_hl = (hl_hist < net_hl).mean() if len(hl_hist) > 0 else 0.5
         b4_hl = p_rank_hl * 10.0
     b4 = b4_vol + b4_hl
@@ -242,7 +235,7 @@ def calculate_vcp_composite_score(latest_row, history_df):
     p200 = latest_row.get('Pct_Above_200_EMA', 0) or 0
     p200_slope = 0
     if len(history_df) >= 20:
-        p200_hist = history_df['Pct_Above_200_EMA'].dropna()
+        p200_hist = history_df.get('Pct_Above_200_EMA', pd.Series()).dropna()
         if len(p200_hist) >= 20: p200_slope = p200_hist.iloc[-1] - p200_hist.iloc[-20]
             
     if p200 >= 50 and p200_slope >= 0: b5 = 10.0
@@ -258,7 +251,7 @@ def calculate_vcp_composite_score(latest_row, history_df):
     if gap >= 25.0: penalty = -min(15.0, (gap - 25.0) * 0.5 + 5.0)
         
     bonus = 0
-    recent_20 = history_df['Pct_Above_20_EMA'].tail(20)
+    recent_20 = history_df.get('Pct_Above_20_EMA', pd.Series()).tail(20)
     if (recent_20 <= 10.0).any() and p_blend >= 50.0: bonus = 15.0
         
     raw_total = b1 + b2 + b3 + b4 + b5 + penalty + bonus
@@ -297,7 +290,7 @@ def calculate_vcp_composite_score(latest_row, history_df):
 # --- DATE STEPPER LOGIC ---
 unique_dates = df_agg['Date'].sort_values().unique()
 max_date = pd.to_datetime(unique_dates[-1])
-# ✅ FIX 1: Dynamically lock the calendar to the exact first available database date
+# Dynamically lock the calendar to the exact first available database date to prevent crashes
 min_picker_date = pd.to_datetime(unique_dates[0]).date()
 
 if 'last_max_date' not in st.session_state or st.session_state.last_max_date != max_date:
@@ -420,7 +413,6 @@ if is_live_active and st.session_state.analysis_date == max_date:
 # --- DAILY HERO ROW ---
 st.markdown(f"<p style='color: #475569; font-size: 13px; font-weight: 600; margin-top: 15px;'>Market Breadth Status for: <span style='color:#0f172a;'>{actual_date_str}</span></p>", unsafe_allow_html=True)
 
-# ✅ FIX 2: Relaxed 2-column Hero Row so the Command Center text is easy to read
 hero_col1, hero_col2 = st.columns([1.2, 2.0])
 total_adv_dec = advances + declines
 adv_pct = round((advances / total_adv_dec) * 100, 1) if total_adv_dec > 0 else 0
@@ -468,11 +460,11 @@ with hero_col2:
 # --- SECONDARY METRICS ---
 m1, m2 = st.columns(2)
 with m1:
-    vol_ratio = latest['Volume_Ratio'] if pd.notna(latest['Volume_Ratio']) else 0
+    vol_ratio = latest.get('Volume_Ratio', 0) if pd.notna(latest.get('Volume_Ratio', 0)) else 0
     v_col = "#22c55e" if vol_ratio > 1.0 else "#ef4444"
     with st.container(border=True):
         st.markdown(f"<div style='text-align: center;'><div class='card-title' style='margin-top: 5px;'>Volume Breadth Ratio</div><div class='metric-value' style='color: {v_col};'>{vol_ratio:.2f}</div><div class='metric-sub'>Liquidity Flow: Up-Turnover vs Down-Turnover (₹)</div></div>", unsafe_allow_html=True)
-        fig_m2 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d['Volume_Ratio'], marker_color=['#22c55e' if v >= 1.0 else '#ef4444' for v in df_10d['Volume_Ratio']], hovertemplate='Ratio: %{y:.2f}<extra></extra>'))
+        fig_m2 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d.get('Volume_Ratio', pd.Series(np.zeros(10))), marker_color=['#22c55e' if v >= 1.0 else '#ef4444' for v in df_10d.get('Volume_Ratio', pd.Series(np.zeros(10)))], hovertemplate='Ratio: %{y:.2f}<extra></extra>'))
         fig_m2.add_hline(y=1.0, line_dash="dash", line_color="#cbd5e1")
         fig_m2.update_layout(height=80, margin=dict(l=5, r=5, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
         fig_m2.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
@@ -480,15 +472,20 @@ with m1:
         st.plotly_chart(fig_m2, use_container_width=True, config={'displayModeBar': False})
 
 with m2:
-    net_hl = int(latest['Net_52W_High_Low']) if pd.notna(latest['Net_52W_High_Low']) else 0
-    # ✅ FIX 3: Prevent 0 from showing up as alarming red. It is now neutral Slate Grey.
-    if net_hl > 0: h_col = "#22c55e"
-    elif net_hl < 0: h_col = "#ef4444"
-    else: h_col = "#64748b" 
+    net_hl = int(latest.get('Net_52W_High_Low', 0)) if pd.notna(latest.get('Net_52W_High_Low', 0)) else 0
+    
+    # Safe coloring logic for Net Highs/Lows
+    hl_colors = []
+    for v in df_10d.get('Net_52W_High_Low', pd.Series(np.zeros(10))):
+        if pd.isna(v) or v == 0: hl_colors.append('#64748b') # Neutral Slate Grey for zero/nan
+        elif v > 0: hl_colors.append('#22c55e') # Green for positive
+        else: hl_colors.append('#ef4444') # Red for negative
+        
+    h_col = '#64748b' if net_hl == 0 else ('#22c55e' if net_hl > 0 else '#ef4444')
     
     with st.container(border=True):
         st.markdown(f"<div style='text-align: center;'><div class='card-title' style='margin-top: 5px;'>Net 52-Week Highs vs Lows</div><div class='metric-value' style='color: {h_col};'>{net_hl}</div><div class='metric-sub'>New Highs Minus New Lows</div></div>", unsafe_allow_html=True)
-        fig_m3 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d['Net_52W_High_Low'], marker_color=['#22c55e' if v > 0 else ('#ef4444' if v < 0 else '#64748b') for v in df_10d['Net_52W_High_Low']], hovertemplate='Net HL: %{y:.0f}<extra></extra>'))
+        fig_m3 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d.get('Net_52W_High_Low', pd.Series(np.zeros(10))), marker_color=hl_colors, hovertemplate='Net HL: %{y:.0f}<extra></extra>'))
         fig_m3.add_hline(y=0, line_dash="solid", line_color="#cbd5e1")
         fig_m3.update_layout(height=80, margin=dict(l=5, r=5, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
         fig_m3.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
@@ -505,12 +502,12 @@ days_map = {"1 Month": 21, "3 Months": 63, "6 Months": 126, "1 Year": 252, "3 Ye
 days_limit = days_map.get(timeframe, 126)
 plot_df = df_filtered.tail(days_limit)
 
-# ✅ FIX 4: Visual Upgrade for Cumulative A/D Line (Big Beautiful Gradient Chart)
+# CUMULATIVE A/D LINE
 st.markdown("<div class='card-title' style='margin-top: 10px;'>CUMULATIVE ADVANCE / DECLINE LINE (MARKET TREND)</div>", unsafe_allow_html=True)
 with st.container(border=True):
     fig_cad = go.Figure()
     fig_cad.add_trace(go.Scatter(
-        x=plot_df['Date'], y=plot_df['Cumulative_AD'], mode='lines', fill='tozeroy', 
+        x=plot_df['Date'], y=plot_df.get('Cumulative_AD', pd.Series(np.zeros(len(plot_df)))), mode='lines', fill='tozeroy', 
         name="Cum. A/D", line=dict(color='#0ea5e9', width=3), fillcolor='rgba(14, 165, 233, 0.15)'
     ))
     fig_cad.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
@@ -521,16 +518,16 @@ with st.container(border=True):
 
 # SECTION 3: UNIVERSE EMA BREADTH
 with st.container(border=True):
-    val_200 = plot_df['Pct_Above_200_EMA'].iloc[-1]
-    val_50 = plot_df['Pct_Above_50_EMA'].iloc[-1]
-    val_20 = plot_df['Pct_Above_20_EMA'].iloc[-1]
+    val_200 = plot_df.get('Pct_Above_200_EMA', pd.Series([0])).iloc[-1]
+    val_50 = plot_df.get('Pct_Above_50_EMA', pd.Series([0])).iloc[-1]
+    val_20 = plot_df.get('Pct_Above_20_EMA', pd.Series([0])).iloc[-1]
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>UNIVERSE EMA BREADTH TRENDS &nbsp;|&nbsp; LATEST: <span style='color:#22c55e;'>200 EMA ({val_200:.1f}%)</span> • <span style='color:#a855f7;'>50 EMA ({val_50:.1f}%)</span> • <span style='color:#3b82f6;'>20 EMA ({val_20:.1f}%)</span></div>", unsafe_allow_html=True)
     
     fig_ema = go.Figure()
-    # ✅ FIX 5: Explicitly labeled "200 EMA", Thickened Line to width=3, and forced connectgaps=True
-    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Pct_Above_200_EMA'], mode='lines', name='200 EMA', line=dict(color='#22c55e', width=3), hovertemplate='200 EMA: %{y:.1f}%<extra></extra>', connectgaps=True))
-    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Pct_Above_50_EMA'], mode='lines', name='50 EMA', line=dict(color='#a855f7', width=2), hovertemplate='50 EMA: %{y:.1f}%<extra></extra>', connectgaps=True))
-    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Pct_Above_20_EMA'], mode='lines', name='20 EMA', line=dict(color='#3b82f6', width=2), hovertemplate='20 EMA: %{y:.1f}%<extra></extra>', connectgaps=True))
+    # Ensure lines are explicitly drawn and connect across gaps
+    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df.get('Pct_Above_200_EMA', pd.Series(dtype=float)), mode='lines', name='200 EMA', line=dict(color='#22c55e', width=3), hovertemplate='200 EMA: %{y:.1f}%<extra></extra>', connectgaps=True))
+    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df.get('Pct_Above_50_EMA', pd.Series(dtype=float)), mode='lines', name='50 EMA', line=dict(color='#a855f7', width=2), hovertemplate='50 EMA: %{y:.1f}%<extra></extra>', connectgaps=True))
+    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df.get('Pct_Above_20_EMA', pd.Series(dtype=float)), mode='lines', name='20 EMA', line=dict(color='#3b82f6', width=2), hovertemplate='20 EMA: %{y:.1f}%<extra></extra>', connectgaps=True))
     fig_ema.add_hline(y=50, line_dash="dash", line_color="#94a3b8", opacity=0.7)
     
     fig_ema.update_layout(height=450, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0))
@@ -563,16 +560,16 @@ with st.container(border=True):
     with cap_tab2: plot_liquidity_chart('Large_Pct_50_EMA', 'Mid_Pct_50_EMA', 'Small_Pct_50_EMA', 'Micro_Pct_50_EMA')
     with cap_tab3: plot_liquidity_chart('Large_Pct_20_EMA', 'Mid_Pct_20_EMA', 'Small_Pct_20_EMA', 'Micro_Pct_20_EMA')
 
-# SECTION 5: MOMENTUM THRUST & OUTLIERS (2-Col but TALLER)
+# SECTION 5: MOMENTUM THRUST & OUTLIERS 
 out1, out2 = st.columns(2)
 with out1:
     with st.container(border=True):
-        latest_up_25 = int(plot_df['Up_25_1M_Count'].iloc[-1])
-        latest_dn_25 = int(plot_df['Down_25_1M_Count'].iloc[-1])
+        latest_up_25 = int(plot_df.get('Up_25_1M_Count', pd.Series([0])).iloc[-1])
+        latest_dn_25 = int(plot_df.get('Down_25_1M_Count', pd.Series([0])).iloc[-1])
         st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>ROLLING 1-MONTH 25% MOVERS &nbsp;|&nbsp; LATEST: <span style='color:#16a34a;'>{latest_up_25} UP</span> / <span style='color:#dc2626;'>{latest_dn_25} DOWN</span></div>", unsafe_allow_html=True)
         fig_outliers = go.Figure()
-        fig_outliers.add_trace(go.Bar(x=plot_df['Date'], y=plot_df['Up_25_1M_Count'], name='Up 25%+ in 1M', marker_color='#22c55e', hovertemplate='Up 25%: <b>%{y:.0f}</b><extra></extra>'))
-        fig_outliers.add_trace(go.Bar(x=plot_df['Date'], y=-plot_df['Down_25_1M_Count'], name='Down 25%+ in 1M', marker_color='#ef4444', customdata=plot_df['Down_25_1M_Count'], hovertemplate='Down 25%: <b>%{customdata:.0f}</b><extra></extra>'))
+        fig_outliers.add_trace(go.Bar(x=plot_df['Date'], y=plot_df.get('Up_25_1M_Count', pd.Series(np.zeros(len(plot_df)))), name='Up 25%+ in 1M', marker_color='#22c55e', hovertemplate='Up 25%: <b>%{y:.0f}</b><extra></extra>'))
+        fig_outliers.add_trace(go.Bar(x=plot_df['Date'], y=-plot_df.get('Down_25_1M_Count', pd.Series(np.zeros(len(plot_df)))), name='Down 25%+ in 1M', marker_color='#ef4444', customdata=plot_df.get('Down_25_1M_Count', pd.Series(np.zeros(len(plot_df)))), hovertemplate='Down 25%: <b>%{customdata:.0f}</b><extra></extra>'))
         fig_outliers.update_layout(barmode='relative', height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
         fig_outliers.update_yaxes(gridcolor='#f1f5f9', zerolinecolor='black')
         fig_outliers.update_xaxes(showgrid=False)
@@ -580,12 +577,12 @@ with out1:
 
 with out2:
     with st.container(border=True):
-        latest_up_4 = int(plot_df['Rolling_3D_Up_4'].iloc[-1])
-        latest_dn_4 = int(plot_df['Rolling_3D_Down_4'].iloc[-1])
+        latest_up_4 = int(plot_df.get('Rolling_3D_Up_4', pd.Series([0])).iloc[-1])
+        latest_dn_4 = int(plot_df.get('Rolling_3D_Down_4', pd.Series([0])).iloc[-1])
         st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>3-DAY ROLLING 4% THRUST MOVERS &nbsp;|&nbsp; LATEST: <span style='color:#16a34a;'>{latest_up_4} UP</span> / <span style='color:#dc2626;'>{latest_dn_4} DOWN</span></div>", unsafe_allow_html=True)
         fig_movers = go.Figure()
-        fig_movers.add_trace(go.Bar(x=plot_df['Date'], y=plot_df['Rolling_3D_Up_4'], name='Up 4%+', marker_color='#22c55e', hovertemplate='Up 4%+: <b>%{y:.0f}</b><extra></extra>'))
-        fig_movers.add_trace(go.Bar(x=plot_df['Date'], y=-plot_df['Rolling_3D_Down_4'], name='Down 4%+', marker_color='#ef4444', customdata=plot_df['Rolling_3D_Down_4'], hovertemplate='Down 4%+: <b>%{customdata:.0f}</b><extra></extra>'))
+        fig_movers.add_trace(go.Bar(x=plot_df['Date'], y=plot_df.get('Rolling_3D_Up_4', pd.Series(np.zeros(len(plot_df)))), name='Up 4%+', marker_color='#22c55e', hovertemplate='Up 4%+: <b>%{y:.0f}</b><extra></extra>'))
+        fig_movers.add_trace(go.Bar(x=plot_df['Date'], y=-plot_df.get('Rolling_3D_Down_4', pd.Series(np.zeros(len(plot_df)))), name='Down 4%+', marker_color='#ef4444', customdata=plot_df.get('Rolling_3D_Down_4', pd.Series(np.zeros(len(plot_df)))), hovertemplate='Down 4%+: <b>%{customdata:.0f}</b><extra></extra>'))
         fig_movers.update_layout(barmode='relative', height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
         fig_movers.update_yaxes(gridcolor='#f1f5f9', zerolinecolor='black')
         fig_movers.update_xaxes(showgrid=False)
@@ -596,7 +593,6 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("### 🔥 Tactical Exertion & Capitulation Indicators")
 st.markdown("<p style='color: #64748b; font-size: 13px;'>Monitors momentum velocity, panic selling, and breakout success rates.</p>", unsafe_allow_html=True)
 
-# ✅ FIX 6: Converted from cramped 3-columns to breathable 2-columns (Height expanded to 350)
 tac_col1, tac_col2 = st.columns(2)
 
 with tac_col1:
@@ -618,7 +614,8 @@ with tac_col2:
         st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>TRIN (ARMS INDEX)</div>", unsafe_allow_html=True)
         fig_trin = go.Figure()
         trin_series = plot_df.get('TRIN', pd.Series(np.ones(len(plot_df)), index=plot_df.index))
-        fig_trin.add_trace(go.Scatter(x=plot_df['Date'], y=trin_series, mode='lines', line=dict(color='#ab63fa', width=2), name="TRIN", connectgaps=True))
+        # ✅ TRIN is now explicitly a Bar chart 
+        fig_trin.add_trace(go.Bar(x=plot_df['Date'], y=trin_series, marker_color='#ab63fa', name="TRIN"))
         fig_trin.add_hline(y=2.0, line_dash="dash", line_color="#ef4444", annotation_text="Extreme Panic (>2.0)", annotation_position="top left")
         fig_trin.add_hline(y=0.5, line_dash="dash", line_color="#22c55e", annotation_text="Froth (<0.5)", annotation_position="bottom left")
         fig_trin.update_yaxes(range=[0, min(5.0, trin_series.max() + 0.5)], gridcolor='#f1f5f9')
@@ -627,10 +624,11 @@ with tac_col2:
         st.plotly_chart(fig_trin, use_container_width=True)
         st.caption("A reading > 2.0 indicates extreme panic selling. Market bottoms often form precisely on days with maximum fear.")
 
-# ✅ FIX 7: Breakout Success vs Failure chart promoted to its own massive Full-Width container
+# BREAKOUT SUCCESS VS FAILURE
 with st.container(border=True):
     st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>BREAKOUT SUCCESS VS FAILURE</div>", unsafe_allow_html=True)
     fig_brk = go.Figure()
+    # Safe getters added here to prevent crashes if columns are missing
     brk_series = plot_df.get('T3_Breakouts', pd.Series(np.zeros(len(plot_df)), index=plot_df.index))
     win_series = plot_df.get('T3_Wins', pd.Series(np.zeros(len(plot_df)), index=plot_df.index))
     fig_brk.add_trace(go.Bar(x=plot_df['Date'], y=brk_series, name="Total Attempted", marker_color='rgba(148, 163, 184, 0.4)'))
@@ -640,7 +638,6 @@ with st.container(border=True):
     fig_brk.update_yaxes(gridcolor='#f1f5f9')
     st.plotly_chart(fig_brk, use_container_width=True)
     st.caption("Visualizes raw breakout win-rate expanding or contracting in real-time.")
-
 
 # --- SECTION 7: MULTI-SELECT DEEP DIVE STOCK INSPECTOR ---
 st.markdown("<br>", unsafe_allow_html=True)
