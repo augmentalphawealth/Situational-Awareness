@@ -21,27 +21,28 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests smartapi-python pyotp pyarrow fastparquet logzero websocket-client
+          pip install -r requirements.txt
 
-      - name: Run EOD Scripts
+      - name: Run Daily EOD Sync
         env:
-          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-          ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
-          ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
-          ANGEL_TOTP: ${{ secrets.ANGEL_TOTP }}
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          KITE_USER_ID: ${{ secrets.KITE_USER_ID }}
+          KITE_PASSWORD: ${{ secrets.KITE_PASSWORD }}
+          KITE_TOTP: ${{ secrets.KITE_TOTP }}
         run: |
-          python fetch_6yr_history.py
-          python analyze_6yr_data.py
+          python fetch_eod_6yr.py
 
       - name: Commit and Push Changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git diff-index --quiet HEAD || git commit -m "Auto-update: Daily EOD Database"
+          git diff-index --quiet HEAD || git commit -m "Auto-update: Daily EOD Database [Zerodha]"
           git pull origin main --rebase -X ours || true
           git push origin main
