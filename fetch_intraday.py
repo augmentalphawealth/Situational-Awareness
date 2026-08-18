@@ -44,13 +44,14 @@ try:
     if twofa_res.get("status") != "success":
         raise Exception(f"Zerodha 2FA Failed: {twofa_res}")
     
+    # Step 1: Hit login URL with allow_redirects=False to catch the redirect without hitting 127.0.0.1
     login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}&skip_session=true"
-    redirect_res = session.get(login_url, allow_redirects=True)
+    res = session.get(login_url, allow_redirects=False)
     
-    # Robust Authorization Consent Page Handler
-    if "connect/authorize" in redirect_res.url:
+    # If Zerodha presents the App Authorization Consent page
+    if res.status_code == 200 and ("connect/authorize" in res.text or "authorize" in res.url):
         form_data = {}
-        input_tags = re.findall(r'<input[^>]*>', redirect_res.text, re.IGNORECASE)
+        input_tags = re.findall(r'<input[^>]*>', res.text, re.IGNORECASE)
         for tag in input_tags:
             name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
             if name_match:
@@ -58,39 +59,34 @@ try:
                 val_match = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE)
                 form_data[name] = val_match.group(1) if val_match else ""
                 
-        button_tags = re.findall(r'<button[^>]*>', redirect_res.text, re.IGNORECASE)
-        for btn in button_tags:
-            name_match = re.search(r'name=["\']([^"\']+)["\']', btn, re.IGNORECASE)
-            if name_match:
-                name = name_match.group(1)
-                val_match = re.search(r'value=["\']([^"\']*)["\']', btn, re.IGNORECASE)
-                form_data[name] = val_match.group(1) if val_match else "accept"
-
         if "action" not in form_data:
             form_data["action"] = "accept"
             
-        parsed_url = urlparse(redirect_res.url)
+        parsed_url = urlparse(res.url)
         query_params = parse_qs(parsed_url.query)
         if "sess_id" in query_params and "sess_id" not in form_data:
             form_data["sess_id"] = query_params["sess_id"][0]
         if "api_key" not in form_data:
             form_data["api_key"] = api_key
             
-        redirect_res = session.post(
+        # Submit authorization with allow_redirects=False to catch the 302 redirect to 127.0.0.1
+        res = session.post(
             "https://kite.zerodha.com/connect/authorize",
             data=form_data,
-            allow_redirects=True
+            allow_redirects=False
         )
     
+    # Extract request_token from the Location header directly without connecting to 127.0.0.1
     request_token = None
-    for resp in redirect_res.history + [redirect_res]:
-        qs = parse_qs(urlparse(resp.url).query)
-        if "request_token" in qs:
-            request_token = qs["request_token"][0]
-            break
-            
+    if res.status_code in [301, 302, 303, 307, 308]:
+        redirect_url = res.headers.get("Location")
+        if redirect_url:
+            qs = parse_qs(urlparse(redirect_url).query)
+            if "request_token" in qs:
+                request_token = qs["request_token"][0]
+                
     if not request_token:
-        raise Exception(f"Request token missing. Final URL: {redirect_res.url}")
+        raise Exception(f"Request token missing. Response URL: {res.url}, Status: {res.status_code}")
         
     data = kite.generate_session(request_token, api_secret=api_secret)
     kite.set_access_token(data["access_token"])
