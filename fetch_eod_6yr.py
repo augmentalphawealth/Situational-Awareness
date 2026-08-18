@@ -19,19 +19,42 @@ print("Logging in to Zerodha for EOD Batch Sync & Delta Check...")
 try:
     kite = KiteConnect(api_key=api_key)
     session = requests.Session()
+    
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    })
+    
     login_res = session.post("https://kite.zerodha.com/api/login", data={"user_id": user_id, "password": password}).json()
+    if login_res.get("status") != "success":
+        raise Exception(f"Zerodha Login Failed: {login_res}")
     request_id = login_res["data"]["request_id"]
     
     totp_token = pyotp.TOTP(totp_secret).now()
-    session.post("https://kite.zerodha.com/api/twofa", data={
-        "user_id": user_id, "request_id": request_id, 
-        "twofa_value": totp_token, "twofa_type": "totp"
-    })
-    login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
+    twofa_res = session.post("https://kite.zerodha.com/api/twofa", data={
+        "user_id": user_id, 
+        "request_id": request_id, 
+        "twofa_value": totp_token
+    }).json()
+    
+    if twofa_res.get("status") != "success":
+        raise Exception(f"Zerodha 2FA Failed: {twofa_res}")
+        
+    login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}&skip_session=true"
     redirect_res = session.get(login_url, allow_redirects=True)
-    request_token = parse_qs(urlparse(redirect_res.url).query)["request_token"][0]
+    
+    request_token = None
+    for resp in redirect_res.history + [redirect_res]:
+        qs = parse_qs(urlparse(resp.url).query)
+        if "request_token" in qs:
+            request_token = qs["request_token"][0]
+            break
+            
+    if not request_token:
+        raise Exception(f"Request token missing. Final URL: {redirect_res.url}")
+        
     data = kite.generate_session(request_token, api_secret=api_secret)
     kite.set_access_token(data["access_token"])
+    print("✅ Zerodha Authentication Successful.")
 except Exception as e:
     print("❌ Error logging in:", e)
     sys.exit(1)
