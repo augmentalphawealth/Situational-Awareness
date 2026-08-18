@@ -43,50 +43,48 @@ try:
     
     if twofa_res.get("status") != "success":
         raise Exception(f"Zerodha 2FA Failed: {twofa_res}")
-    
-    # Step 1: Hit login URL with allow_redirects=False to catch the redirect without hitting 127.0.0.1
-    login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}&skip_session=true"
-    res = session.get(login_url, allow_redirects=False)
-    
-    # If Zerodha presents the App Authorization Consent page
-    if res.status_code == 200 and ("connect/authorize" in res.text or "authorize" in res.url):
-        form_data = {}
-        input_tags = re.findall(r'<input[^>]*>', res.text, re.IGNORECASE)
-        for tag in input_tags:
-            name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
-            if name_match:
-                name = name_match.group(1)
-                val_match = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE)
-                form_data[name] = val_match.group(1) if val_match else ""
-                
-        if "action" not in form_data:
-            form_data["action"] = "accept"
-            
-        parsed_url = urlparse(res.url)
-        query_params = parse_qs(parsed_url.query)
-        if "sess_id" in query_params and "sess_id" not in form_data:
-            form_data["sess_id"] = query_params["sess_id"][0]
-        if "api_key" not in form_data:
-            form_data["api_key"] = api_key
-            
-        # Submit authorization with allow_redirects=False to catch the 302 redirect to 127.0.0.1
-        res = session.post(
-            "https://kite.zerodha.com/connect/authorize",
-            data=form_data,
-            allow_redirects=False
-        )
-    
-    # Extract request_token from the Location header directly without connecting to 127.0.0.1
+        
     request_token = None
-    if res.status_code in [301, 302, 303, 307, 308]:
-        redirect_url = res.headers.get("Location")
-        if redirect_url:
-            qs = parse_qs(urlparse(redirect_url).query)
-            if "request_token" in qs:
-                request_token = qs["request_token"][0]
-                
+    
+    def get_token(url):
+        qs = parse_qs(urlparse(url).query)
+        return qs.get("request_token", [None])[0]
+
+    try:
+        login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
+        res = session.get(login_url, allow_redirects=True)
+        
+        if "connect/authorize" in res.url:
+            form_data = {}
+            for tag in re.findall(r'<input[^>]*>', res.text, re.IGNORECASE):
+                name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+                if name_match:
+                    val_match = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE)
+                    form_data[name_match.group(1)] = val_match.group(1) if val_match else ""
+            
+            if "action" not in form_data:
+                form_data["action"] = "accept"
+            
+            query_params = parse_qs(urlparse(res.url).query)
+            if "sess_id" in query_params and "sess_id" not in form_data:
+                form_data["sess_id"] = query_params["sess_id"][0]
+            if "api_key" not in form_data:
+                form_data["api_key"] = api_key
+            
+            res = session.post("https://kite.zerodha.com/connect/authorize", data=form_data, allow_redirects=True)
+        
+        for resp in res.history + [res]:
+            request_token = get_token(resp.url)
+            if request_token: 
+                break
+
+    except requests.exceptions.RequestException as e:
+        # Gracefully catch the 127.0.0.1 ConnectionError and extract the token
+        if e.request and hasattr(e.request, 'url'):
+            request_token = get_token(e.request.url)
+            
     if not request_token:
-        raise Exception(f"Request token missing. Response URL: {res.url}, Status: {res.status_code}")
+        raise Exception("Failed to extract request token from redirect chain.")
         
     data = kite.generate_session(request_token, api_secret=api_secret)
     kite.set_access_token(data["access_token"])
