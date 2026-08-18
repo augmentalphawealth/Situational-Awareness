@@ -19,49 +19,44 @@ user_id = os.environ.get("KITE_USER_ID")
 password = os.environ.get("KITE_PASSWORD")
 totp_secret = os.environ.get("KITE_TOTP")
 
-print("Logging in to Zerodha...")
+print("Logging in to Zerodha for Intraday Engine Snapshot...")
 try:
     kite = KiteConnect(api_key=api_key)
     session = requests.Session()
     
-    # FIX 1: Add Standard User-Agent to prevent WAF blocks
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     })
     
-    # FIX 2: Validate Login Response
     login_res = session.post("https://kite.zerodha.com/api/login", data={"user_id": user_id, "password": password}).json()
     if login_res.get("status") != "success":
         raise Exception(f"Zerodha Login Failed: {login_res}")
     request_id = login_res["data"]["request_id"]
     
-    # FIX 3: Validate 2FA Response
     totp_token = pyotp.TOTP(totp_secret).now()
+    # FIX: Removed 'twofa_type' to prevent InputException
     twofa_res = session.post("https://kite.zerodha.com/api/twofa", data={
         "user_id": user_id, 
         "request_id": request_id, 
-        "twofa_value": totp_token, 
-        "twofa_type": "totp"
+        "twofa_value": totp_token
     }).json()
     
     if twofa_res.get("status") != "success":
         raise Exception(f"Zerodha 2FA Failed: {twofa_res}")
     
-    # FIX 4: Add skip_session=true and scan redirect history for the token
     login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}&skip_session=true"
     redirect_res = session.get(login_url, allow_redirects=True)
     
     request_token = None
-    # Check the final URL and all intermediate redirects to catch the token
     for resp in redirect_res.history + [redirect_res]:
         qs = parse_qs(urlparse(resp.url).query)
         if "request_token" in qs:
             request_token = qs["request_token"][0]
             break
-    
+            
     if not request_token:
         raise Exception(f"Request token missing. Final URL: {redirect_res.url}")
-    
+        
     data = kite.generate_session(request_token, api_secret=api_secret)
     kite.set_access_token(data["access_token"])
     print("✅ Zerodha Authentication Successful.")
