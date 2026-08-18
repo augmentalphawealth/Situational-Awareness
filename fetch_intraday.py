@@ -47,17 +47,35 @@ try:
     login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}&skip_session=true"
     redirect_res = session.get(login_url, allow_redirects=True)
     
-    # Handle Authorization Consent Page if hit
+    # Robust Authorization Consent Page Handler
     if "connect/authorize" in redirect_res.url:
-        inputs = re.findall(r'<input[^>]+name="([^"]+)"[^>]+value="([^"]*)"', redirect_res.text)
-        form_data = {name: val for name, val in inputs}
-        if not form_data:
-            parsed_url = urlparse(redirect_res.url)
-            query_params = parse_qs(parsed_url.query)
-            form_data = {
-                "api_key": api_key,
-                "sess_id": query_params.get("sess_id", [""])[0]
-            }
+        form_data = {}
+        input_tags = re.findall(r'<input[^>]*>', redirect_res.text, re.IGNORECASE)
+        for tag in input_tags:
+            name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+            if name_match:
+                name = name_match.group(1)
+                val_match = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE)
+                form_data[name] = val_match.group(1) if val_match else ""
+                
+        button_tags = re.findall(r'<button[^>]*>', redirect_res.text, re.IGNORECASE)
+        for btn in button_tags:
+            name_match = re.search(r'name=["\']([^"\']+)["\']', btn, re.IGNORECASE)
+            if name_match:
+                name = name_match.group(1)
+                val_match = re.search(r'value=["\']([^"\']*)["\']', btn, re.IGNORECASE)
+                form_data[name] = val_match.group(1) if val_match else "accept"
+
+        if "action" not in form_data:
+            form_data["action"] = "accept"
+            
+        parsed_url = urlparse(redirect_res.url)
+        query_params = parse_qs(parsed_url.query)
+        if "sess_id" in query_params and "sess_id" not in form_data:
+            form_data["sess_id"] = query_params["sess_id"][0]
+        if "api_key" not in form_data:
+            form_data["api_key"] = api_key
+            
         redirect_res = session.post(
             "https://kite.zerodha.com/connect/authorize",
             data=form_data,
