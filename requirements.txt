@@ -3,7 +3,9 @@ pandas
 numpy
 plotly
 requests
-kiteconnect
+smartapi-python
 pyotp
 pyarrow
 fastparquet
+logzero
+websocket-client
