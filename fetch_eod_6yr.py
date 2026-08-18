@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import pyotp
+import re
 from kiteconnect import KiteConnect
 from urllib.parse import urlparse, parse_qs
 from fetch_6yr_history import rebuild_database
@@ -41,6 +42,22 @@ try:
         
     login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}&skip_session=true"
     redirect_res = session.get(login_url, allow_redirects=True)
+    
+    if "connect/authorize" in redirect_res.url:
+        inputs = re.findall(r'<input[^>]+name="([^"]+)"[^>]+value="([^"]*)"', redirect_res.text)
+        form_data = {name: val for name, val in inputs}
+        if not form_data:
+            parsed_url = urlparse(redirect_res.url)
+            query_params = parse_qs(parsed_url.query)
+            form_data = {
+                "api_key": api_key,
+                "sess_id": query_params.get("sess_id", [""])[0]
+            }
+        redirect_res = session.post(
+            "https://kite.zerodha.com/connect/authorize",
+            data=form_data,
+            allow_redirects=True
+        )
     
     request_token = None
     for resp in redirect_res.history + [redirect_res]:
