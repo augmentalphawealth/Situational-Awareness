@@ -79,7 +79,6 @@ try:
                 break
 
     except requests.exceptions.RequestException as e:
-        # Gracefully catch the 127.0.0.1 ConnectionError and extract the token
         if e.request and hasattr(e.request, 'url'):
             request_token = get_token(e.request.url)
             
@@ -116,8 +115,9 @@ today_dt = pd.to_datetime(today_str)
 time_now_str = now_ist.strftime("%H:%M")
 
 new_rows = []
-print(f"Fetching live intraday quotes for Engine calculation...")
+print(f"Fetching live intraday quotes for {len(kite_symbols)} stocks in {len(chunks)} chunks...")
 for chunk in chunks:
+    chunk_success = False
     for attempt in range(5): 
         try:
             res = kite.quote(chunk)
@@ -133,13 +133,20 @@ for chunk in chunks:
                         "Close": data['last_price'],
                         "Volume": data['volume'] 
                     })
+                chunk_success = True
                 break
-        except Exception:
+        except Exception as e:
+            # UNMASKING THE ERROR HERE
+            print(f"⚠️ Quote API Error (Attempt {attempt+1}/5): {e}")
             time.sleep(2)
+            
+    if not chunk_success:
+        print("❌ Exhausted 5 attempts for a chunk. Moving to next.")
+        
     time.sleep(0.4) 
 
 if not new_rows:
-    print("⚠️ No data fetched. API might be down.")
+    print("⚠️ No data fetched. API might be down or subscription invalid.")
     sys.exit(1)
 
 df_live = pd.DataFrame(new_rows)
