@@ -3,7 +3,7 @@ name: Intraday Update
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 3-9 * * 1-5'
+    - cron: '*/15 3-10 * * 1-5'
 
 permissions:
   contents: write
@@ -26,14 +26,15 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests smartapi-python pyotp pyarrow fastparquet logzero websocket-client
+          pip install -r requirements.txt
 
-      - name: Run Intraday Scripts
+      - name: Run Intraday Script
         env:
-          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-          ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
-          ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
-          ANGEL_TOTP: ${{ secrets.ANGEL_TOTP }}
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          KITE_USER_ID: ${{ secrets.KITE_USER_ID }}
+          KITE_PASSWORD: ${{ secrets.KITE_PASSWORD }}
+          KITE_TOTP: ${{ secrets.KITE_TOTP }}
         run: |
           python fetch_intraday.py
 
@@ -42,6 +43,6 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git diff-index --quiet HEAD || git commit -m "Auto-update: Intraday Breadth Data"
+          git diff-index --quiet HEAD || git commit -m "Auto-update: Intraday Breadth Data [Zerodha]"
           git pull origin main --rebase -X ours || true
           git push origin main
