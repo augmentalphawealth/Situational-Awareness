@@ -48,7 +48,8 @@ total_stocks = len(tokens_to_fetch)
 print(f"Starting historical data fetch for {total_stocks} stocks...")
 
 for i, stock in enumerate(tokens_to_fetch):
-    for attempt in range(5): # Increased to 5 attempts
+    # MASSIVE RATE LIMIT FIX: 10 attempts, 15-second cooldown
+    for attempt in range(10): 
         try:
             historicParam = {
                 "exchange": "NSE",
@@ -61,8 +62,8 @@ for i, stock in enumerate(tokens_to_fetch):
             
             if hist_data and hist_data.get('status') == False:
                 if hist_data.get('errorcode') == 'AB1021':
-                    print(f"⚠️ Rate Limit Hit (AB1021). Cooling down for 10 seconds...")
-                    time.sleep(10) # Massive cooldown to reset API firewall
+                    print(f"⚠️ Rate Limit Hit (AB1021) for token {stock['token']}. Cooling down for 15 seconds... (Attempt {attempt+1}/10)")
+                    time.sleep(15) 
                     continue 
             
             if hist_data and hist_data.get('data'):
@@ -77,7 +78,7 @@ for i, stock in enumerate(tokens_to_fetch):
     if (i + 1) % 100 == 0:
         print(f"Progress: {i + 1} / {total_stocks} stocks fetched.")
         
-    time.sleep(0.5) # Hard limit of 2 requests per second to stay under radar
+    time.sleep(0.5) 
 
 if all_ohlc_data:
     final_df = pd.concat(all_ohlc_data, ignore_index=True)
