@@ -75,6 +75,7 @@ try:
                 break
 
     except requests.exceptions.RequestException as e:
+        # Safely catch the 127.0.0.1 redirect crash and extract the token!
         if e.request and hasattr(e.request, 'url'):
             request_token = get_token(e.request.url)
             
@@ -114,6 +115,7 @@ for chunk in chunks:
     if trigger_rebuild: 
         break
         
+    chunk_success = False
     for attempt in range(5):
         try:
             res = kite.quote(chunk)
@@ -145,12 +147,15 @@ for chunk in chunks:
                     })
                 chunk_success = True
                 break
+            else:
+                print(f"⚠️ Zerodha returned empty data. Check symbol format! Sent: {chunk[:3]}")
+                time.sleep(2)
         except Exception as e:
             print(f"⚠️ Quote API Error (Attempt {attempt+1}/5): {e}")
             time.sleep(2)
             
     if not chunk_success:
-        print("❌ Exhausted 5 attempts for a chunk. Moving to next.")
+        print(f"❌ Exhausted 5 attempts for chunk. Example symbols: {chunk[:3]}")
         
     time.sleep(0.4)
 
