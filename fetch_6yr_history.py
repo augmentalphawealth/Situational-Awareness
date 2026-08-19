@@ -32,12 +32,11 @@ def rebuild_database():
         login_res = session.post("https://kite.zerodha.com/api/login", data={"user_id": user_id, "password": password}).json()
         if login_res.get("status") != "success":
             raise Exception(f"Zerodha Login Failed: {login_res}")
-        request_id = login_res["data"]["request_id"]
         
         totp_token = pyotp.TOTP(totp_secret).now()
         twofa_res = session.post("https://kite.zerodha.com/api/twofa", data={
             "user_id": user_id, 
-            "request_id": request_id, 
+            "request_id": login_res["data"]["request_id"], 
             "twofa_value": totp_token
         }).json()
         
@@ -62,24 +61,20 @@ def rebuild_database():
                         val_match = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE)
                         form_data[name_match.group(1)] = val_match.group(1) if val_match else ""
                 
-                if "action" not in form_data:
-                    form_data["action"] = "accept"
+                if "action" not in form_data: form_data["action"] = "accept"
                 
                 query_params = parse_qs(urlparse(res.url).query)
                 if "sess_id" in query_params and "sess_id" not in form_data:
                     form_data["sess_id"] = query_params["sess_id"][0]
-                if "api_key" not in form_data:
-                    form_data["api_key"] = api_key
+                if "api_key" not in form_data: form_data["api_key"] = api_key
                 
                 res = session.post("https://kite.zerodha.com/connect/authorize", data=form_data, allow_redirects=True)
             
             for resp in res.history + [res]:
                 request_token = get_token(resp.url)
-                if request_token: 
-                    break
+                if request_token: break
 
         except requests.exceptions.RequestException as e:
-            # Safely catch the 127.0.0.1 redirect crash and extract the token!
             if e.request and hasattr(e.request, 'url'):
                 request_token = get_token(e.request.url)
                 
@@ -99,59 +94,67 @@ def rebuild_database():
     nse_stocks = df_scripts[df_scripts['instrument_type'] == 'EQ']
     tokens_to_fetch = nse_stocks[['tradingsymbol', 'instrument_token']].to_dict('records')
 
-    from_date_str = "2018-04-01"
-    to_date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    # Safe Chunking Logic
+    yesterday_str = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    chunk1_start, chunk1_end = "2018-04-01", "2022-03-31"
+    chunk2_start, chunk2_end = "2022-04-01", yesterday_str
 
     all_ohlc_data = []
     total_stocks = len(tokens_to_fetch)
+    consecutive_failures = 0
 
-    print(f"Starting ADJUSTED historical data fetch for {total_stocks} stocks...")
+    print(f"Starting ADJUSTED historical data fetch for {total_stocks} stocks in chunks...")
 
     for i, stock in enumerate(tokens_to_fetch):
+        stock_data = []
+        fetch_success = False
+        
         for attempt in range(3):
             try:
-                hist_data = kite.historical_data(
-                    instrument_token=stock['instrument_token'],
-                    from_date=from_date_str,
-                    to_date=to_date_str,
-                    interval="day"
-                )
+                # Chunk 1
+                chunk1 = kite.historical_data(stock['instrument_token'], chunk1_start, chunk1_end, "day")
+                time.sleep(0.35) 
+                # Chunk 2
+                chunk2 = kite.historical_data(stock['instrument_token'], chunk2_start, chunk2_end, "day")
+                time.sleep(0.35) 
                 
-                if hist_data:
-                    df_temp = pd.DataFrame(hist_data)
-                    df_temp = df_temp.rename(columns={
-                        'date': 'Date', 'open': 'Open', 'high': 'High', 
-                        'low': 'Low', 'close': 'Close', 'volume': 'Volume'
-                    })
+                if chunk1: stock_data.extend(chunk1)
+                if chunk2: stock_data.extend(chunk2)
+                
+                if stock_data:
+                    df_temp = pd.DataFrame(stock_data)
+                    df_temp = df_temp.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
                     df_temp['Symbol'] = stock['tradingsymbol']
-                    if 'oi' in df_temp.columns:
-                        df_temp = df_temp.drop(columns=['oi'])
-                    
+                    if 'oi' in df_temp.columns: df_temp = df_temp.drop(columns=['oi'])
                     df_temp['Date'] = pd.to_datetime(df_temp['Date']).dt.tz_localize(None).dt.date
                     all_ohlc_data.append(df_temp)
+                    
+                fetch_success = True
+                consecutive_failures = 0 
                 break 
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ Error fetching {stock['tradingsymbol']}: {e}")
                 time.sleep(1) 
+                
+        if not fetch_success:
+            print(f"❌ Failed to fetch {stock['tradingsymbol']} after 3 attempts.")
+            consecutive_failures += 1
+            if consecutive_failures >= 10:
+                print("\n🚨 CRITICAL ERROR: 10 consecutive stock failures detected. Terminating early.")
+                sys.exit(1)
                 
         if (i + 1) % 150 == 0:
             print(f"Progress: {i + 1} / {total_stocks} stocks fetched.")
-            
-        time.sleep(0.35) 
 
     if all_ohlc_data:
         final_df = pd.concat(all_ohlc_data, ignore_index=True)
         output_file = "nse_6yr_historical.parquet"
         final_df.to_parquet(output_file, index=False)
         print(f"✅ SUCCESS! ADJUSTED Database updated and saved to {output_file}.")
-        
-        # Trigger math calculations after rebuild
-        print("Triggering Math Engine (analyze_6yr_data.py)...")
         os.system("python analyze_6yr_data.py")
     else:
         print("❌ Failed to fetch historical data.")
         sys.exit(1)
 
-# Execute if run directly via GitHub Action
 if __name__ == "__main__":
     rebuild_database()
-    
