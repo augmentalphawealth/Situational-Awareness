@@ -35,10 +35,7 @@ jobs:
       - name: Run Intraday Script
         env:
           KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
-          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
-          KITE_USER_ID: ${{ secrets.KITE_USER_ID }}
-          KITE_PASSWORD: ${{ secrets.KITE_PASSWORD }}
-          KITE_TOTP: ${{ secrets.KITE_TOTP }}
+          KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
         run: |
           python fetch_intraday.py
 
