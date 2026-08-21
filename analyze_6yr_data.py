@@ -16,16 +16,12 @@ df = pd.read_parquet(parquet_file)
 df['Date'] = pd.to_datetime(df['Date'])
 df = df.sort_values(by=['Symbol', 'Date']).reset_index(drop=True)
 
-# 1. Moving Averages & Filters
 df['Daily_Turnover'] = df['Close'] * df['Volume']
 df['Turnover_45d_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(window=45, min_periods=10).mean())
 df['Cap_Rank'] = df.groupby('Date')['Turnover_45d_Avg'].rank(ascending=False, method='min')
 
-conditions = [
-    (df['Cap_Rank'] <= 100), (df['Cap_Rank'] > 100) & (df['Cap_Rank'] <= 250), (df['Cap_Rank'] > 250) & (df['Cap_Rank'] <= 500)
-]
-choices = ['Top 100 Liq', 'Mid 150 Liq', 'Lower 250 Liq']
-df['Liquidity_Category'] = np.select(conditions, choices, default='Micro Liq')
+conditions = [(df['Cap_Rank'] <= 100), (df['Cap_Rank'] > 100) & (df['Cap_Rank'] <= 250), (df['Cap_Rank'] > 250) & (df['Cap_Rank'] <= 500)]
+df['Liquidity_Category'] = np.select(conditions, ['Top 100 Liq', 'Mid 150 Liq', 'Lower 250 Liq'], default='Micro Liq')
 
 df['EMA_20'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=20).mean())
 df['EMA_50'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=50).mean())
@@ -42,7 +38,6 @@ df['Loser'] = (df['Daily_Pct'] < 0) & traded_today
 df['Rolling_52W_High'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=200).max())
 df['Rolling_52W_Low'] = df.groupby('Symbol')['Low'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=200).min())
 
-# Drop initial build-up period where 200 EMA & 52W Highs are NaN
 df = df.dropna(subset=['EMA_200', 'Rolling_52W_High']).reset_index(drop=True)
 
 df['Above_20_EMA'] = df['Close'] > df['EMA_20']
@@ -60,7 +55,7 @@ df['Down_25_1M'] = df['Pct_1M'] <= -25.0
 df['New_52W_High'] = (df['Close'] >= df['Rolling_52W_High']) & traded_today
 df['New_52W_Low'] = (df['Close'] <= df['Rolling_52W_Low']) & traded_today
 
-# 2. VCP & EOD Breakout Math (1.5x Volume)
+# EOD Breakout (1.5x Volume Rule)
 df['Prev_Close'] = df.groupby('Symbol')['Close'].shift(1)
 df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Prev_Close']), abs(df['Low'] - df['Prev_Close'])))
 df['ATR_14'] = df.groupby('Symbol')['TR'].transform(lambda x: x.ewm(alpha=1/14, min_periods=14, adjust=False).mean())
@@ -74,7 +69,6 @@ df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 1.5)
 prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).fillna(False).astype(bool)
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
 
-# T+3 Backward-Looking Cohort
 df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).fillna(False).astype(bool)
 df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
 df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3d_ago'])
@@ -82,7 +76,6 @@ df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3
 df['Up_Volume'] = np.where(df['Gainer'], df['Daily_Turnover'], 0)
 df['Down_Volume'] = np.where(df['Loser'], df['Daily_Turnover'], 0)
 
-# 3. Breadth Aggregation
 def get_liq_breadth(data, liq_name, prefix):
     liq_df = data[data['Liquidity_Category'] == liq_name]
     aggregated = liq_df.groupby('Date').agg(
@@ -114,38 +107,61 @@ overall_breadth = df.groupby('Date').agg(
 overall_breadth['Pct_Above_20_EMA'] = (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20'].replace(0, np.nan)) * 100
 overall_breadth['Pct_Above_50_EMA'] = (overall_breadth['Above_50_EMA'] / overall_breadth['Valid_50'].replace(0, np.nan)) * 100
 overall_breadth['Pct_Above_200_EMA'] = (overall_breadth['Above_200_EMA'] / overall_breadth['Valid_200'].replace(0, np.nan)) * 100
-
 overall_breadth['Rolling_3D_Up_4'] = overall_breadth['Up_4_Count'].rolling(window=3).sum()
 overall_breadth['Rolling_3D_Down_4'] = overall_breadth['Down_4_Count'].rolling(window=3).sum()
 overall_breadth['Net_52W_High_Low'] = overall_breadth['New_52W_Highs'] - overall_breadth['New_52W_Lows']
 overall_breadth['Volume_Ratio'] = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan)
-
-# 4. TRIN & MCO (Guarded Division)
 overall_breadth['AD_Spread'] = overall_breadth['Advances'] - overall_breadth['Declines']
 overall_breadth['MCO'] = overall_breadth['AD_Spread'].ewm(span=19, adjust=False).mean() - overall_breadth['AD_Spread'].ewm(span=39, adjust=False).mean()
+overall_breadth['TRIN'] = (overall_breadth['Advances'] / overall_breadth['Declines'].replace(0, np.nan)) / (overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan))
 
-overall_breadth['Advances'] = overall_breadth['Advances'].replace(0, 1) 
-adv_dec = overall_breadth['Advances'] / overall_breadth['Declines'].replace(0, np.nan)
-up_dn_vol = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan)
-overall_breadth['TRIN'] = adv_dec / up_dn_vol
+final_summary = overall_breadth.merge(large_breadth, on='Date', how='left').merge(mid_breadth, on='Date', how='left').merge(small_breadth, on='Date', how='left').merge(micro_breadth, on='Date', how='left')
 
-final_summary = overall_breadth.merge(large_breadth, on='Date', how='left')
-final_summary = final_summary.merge(mid_breadth, on='Date', how='left')
-final_summary = final_summary.merge(small_breadth, on='Date', how='left')
-final_summary = final_summary.merge(micro_breadth, on='Date', how='left')
+# FULL 7-PART COMPOSITE SCORE CALCULATION
+df_score = final_summary.copy()
 
-# 5. Pre-calculate Composite Score
-def get_score(row):
-    p_blend = (0.65 * row.get('Large_Pct_20_EMA', 0)) + (0.35 * row.get('Large_Pct_50_EMA', 0))
-    ft_rate = (row.get('T3_Wins', 0) / row.get('T3_Breakouts', 1) * 100) if row.get('T3_Breakouts', 0) > 0 else 0
-    return int(max(0, min(100, (25 if p_blend > 50 else 0) + (25 if ft_rate > 50 else 0) + (25 if row.get('Net_52W_High_Low', 0) > 0 else 0) + (25 if row.get('Volume_Ratio', 0) > 1.0 else 0))))
+# C1: Breadth (Up to 25 pts)
+p_blend = (0.65 * df_score['Pct_Above_20_EMA']) + (0.35 * df_score['Pct_Above_50_EMA'])
+c1_breadth = (p_blend / 100) * 25
 
-final_summary['Composite_Score'] = [get_score(row) for _, row in final_summary.iterrows()]
+# C2: Breakout Success (25 pts or 0)
+ft_rate = np.where(df_score['T3_Breakouts'] > 0, (df_score['T3_Wins'] / df_score['T3_Breakouts']) * 100, 0)
+c2_breakout = np.where(ft_rate > 50, 25, 0)
+
+# C3: Momentum Thrust (Up to 20 pts)
+net_4d = df_score['Rolling_3D_Up_4'] - df_score['Rolling_3D_Down_4']
+net_1m = df_score['Up_25_1M_Count'] - df_score['Down_25_1M_Count']
+rank_4d = net_4d.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
+rank_1m = net_1m.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
+c3_momentum = (rank_4d * 10) + (rank_1m * 10)
+
+# C4: Volume & 52W H/L (Up to 20 pts)
+rank_vol = df_score['Volume_Ratio'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
+rank_hl = df_score['Net_52W_High_Low'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
+c4_vol_hl = np.where(df_score['Volume_Ratio'] > 1.0, rank_vol * 10, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 10, 0)
+
+# C5: Long-Term Structure (10 pts)
+p200 = df_score['Pct_Above_200_EMA']
+p200_slope = p200.diff(20) 
+c5_lt = np.where((p200 > 50) & (p200_slope > 0), 10, np.where((p200 <= 50) & (p200_slope < 0), 0, 5))
+
+# C6: Narrowness Penalty (0 to -15 pts)
+hunting_ground = (df_score['Small_Pct_50_EMA'] + df_score['Micro_Pct_50_EMA']) / 2
+gap = df_score['Large_Pct_50_EMA'] - hunting_ground
+c6_penalty = np.where(gap >= 25, np.maximum(-15, (gap - 25) * -0.5), 0)
+
+# C7: Washout Recovery Bonus (+15 pts)
+min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20).min()
+c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
+
+# Final Integration
+raw_score = c1_breadth + c2_breakout + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + c5_lt + c6_penalty + c7_bonus
+final_summary['Composite_Score'] = raw_score.clip(lower=0, upper=100).round().astype(int)
+
 final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
 output_csv = "historical_breadth_regime_6yr.csv"
 final_summary.to_csv(output_csv, index=False)
 
-# Keep trailing ~450 calendar days (approx 300 trading days) for Intraday caching to avoid date bugs
 cutoff_date = df['Date'].max() - pd.Timedelta(days=450)
 df[df['Date'] >= cutoff_date].to_parquet("trailing_cache.parquet", index=False)
 print("✅ Output Generated Successfully.")
