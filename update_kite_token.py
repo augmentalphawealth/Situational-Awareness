@@ -22,7 +22,6 @@ print("Initiating Daily Zerodha Token Rotation via Browser Automation...")
 
 def get_request_token():
     with sync_playwright() as p:
-        # Stealth arguments to bypass basic bot detection
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         page = context.new_page()
@@ -31,26 +30,25 @@ def get_request_token():
             login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
             page.goto(login_url, wait_until="domcontentloaded")
             
-            # 1. Login Screen (Using exact Zerodha element IDs)
-            page.wait_for_selector("#userid", timeout=15000)
-            page.fill("#userid", user_id)
-            page.fill("#password", password)
+            # 1. Login Screen
+            page.wait_for_selector("input[type='text']", timeout=15000)
+            page.fill("input[type='text']", user_id)
+            page.fill("input[type='password']", password)
             page.click("button[type='submit']")
             
             # 2. Two-Factor Authentication (2FA) Screen
-            # Wait for the userid field to disappear to confirm 2FA screen has loaded
-            page.wait_for_selector("#userid", state="hidden", timeout=15000)
+            # Wait for the password field to disappear to confirm 2FA screen has loaded
+            page.wait_for_selector("input[type='password']", state="hidden", timeout=15000)
             time.sleep(2)  # Critical pause for the 2FA DOM to render
             
             totp_token = pyotp.TOTP(totp_secret).now()
             
-            # Fault-tolerant 2FA input
+            # Fault-tolerant 2FA input targeting the morphed number field
             try:
-                # Find the visible 2FA text/number box and fill it
-                totp_input = page.locator("input[type='text']:visible, input[type='password']:visible, input[type='number']:visible").first
+                totp_input = page.locator("input[type='number'], input[label*='TOTP']").first
                 totp_input.fill(totp_token)
             except Exception:
-                # Fallback: If elements are hidden, rely on Kite's auto-focus and type directly
+                # Fallback: If elements change again, rely on Kite's auto-focus and type directly
                 page.keyboard.type(totp_token)
                 
             # Click submit if Kite doesn't auto-submit the 6 digits
@@ -111,6 +109,10 @@ except Exception as e:
 # --- GitHub Secret Injection Phase (PyNaCl Encryption) ---
 print("Injecting Token into GitHub Secrets...")
 try:
+    if not gh_pat:
+        print("❌ GH_PAT missing from environment variables.")
+        sys.exit(1)
+        
     headers = {
         "Authorization": f"Bearer {gh_pat}",
         "Accept": "application/vnd.github+json",
