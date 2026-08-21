@@ -156,9 +156,11 @@ df['20D_High'] = df['Close'] > df['Max_20D_Prior']
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
 df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 0.5)
 
-prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).fillna(False).astype(bool)
+# PANDAS WARNING FIX: Use math casting instead of fillna(False)
+prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).astype(float).fillna(0.0).astype(bool)
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
-df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).fillna(False).astype(bool)
+
+df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).astype(float).fillna(0.0).astype(bool)
 df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
 df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3d_ago'])
 
@@ -183,6 +185,7 @@ micro_breadth = get_liq_breadth(df, 'Micro Liq', 'Micro')
 
 overall_breadth = df.groupby('Date').agg(
     Total_Universe=('Symbol', 'count'),
+    Valid_20=('Valid_20_EMA', 'sum'), Valid_50=('Valid_50_EMA', 'sum'), Valid_200=('Valid_200_EMA', 'sum'),
     Advances=('Gainer', 'sum'), Declines=('Loser', 'sum'),
     Above_20_EMA=('Above_20_EMA', 'sum'), Above_50_EMA=('Above_50_EMA', 'sum'), Above_200_EMA=('Above_200_EMA', 'sum'),
     Up_4_Count=('Up_4_Pct', 'sum'), Down_4_Count=('Down_4_Pct', 'sum'),
@@ -191,6 +194,11 @@ overall_breadth = df.groupby('Date').agg(
     Total_Up_Volume=('Up_Volume', 'sum'), Total_Down_Volume=('Down_Volume', 'sum'),
     T3_Breakouts=('Is_Breakout_3d_ago', 'sum'), T3_Wins=('Follow_Through_Win', 'sum')
 ).reset_index()
+
+# MISSING EMA BREADTH CALCULATIONS RESTORED
+overall_breadth['Pct_Above_20_EMA'] = (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20'].replace(0, np.nan)) * 100
+overall_breadth['Pct_Above_50_EMA'] = (overall_breadth['Above_50_EMA'] / overall_breadth['Valid_50'].replace(0, np.nan)) * 100
+overall_breadth['Pct_Above_200_EMA'] = (overall_breadth['Above_200_EMA'] / overall_breadth['Valid_200'].replace(0, np.nan)) * 100
 
 overall_breadth['Rolling_3D_Up_4'] = overall_breadth['Up_4_Count'].rolling(window=3).sum()
 overall_breadth['Rolling_3D_Down_4'] = overall_breadth['Down_4_Count'].rolling(window=3).sum()
@@ -234,6 +242,8 @@ c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
 
 raw_score = c1_breadth + c2_breakout + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + c5_lt + c6_penalty + c7_bonus
 final_summary['Composite_Score'] = raw_score.clip(lower=0, upper=100).round().astype(int)
+
+final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
 
 final_summary.to_csv("historical_breadth_regime_6yr.csv", index=False)
 intra_df = pd.DataFrame([{"Time": now_ist.strftime("%H:%M"), "Advances": final_summary.iloc[-1]['Advances'], "Declines": final_summary.iloc[-1]['Declines'], "Date": now_ist.strftime("%Y-%m-%d")}])
