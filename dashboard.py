@@ -6,8 +6,9 @@ import requests
 import time
 import os
 import datetime
-from io import StringIO
+from io import StringIO, BytesIO
 from zoneinfo import ZoneInfo
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Situational Awareness Engine", layout="wide", initial_sidebar_state="collapsed")
 
@@ -15,7 +16,10 @@ st.markdown("""
     <style>
     .main { background-color: #f8fafc; }
     .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 98%; }
-    header { visibility: hidden; }
+    
+    /* Target only the top Streamlit bar so calendar header controls remain visible */
+    [data-testid="stHeader"] { display: none; }
+    
     div[data-testid="stVerticalBlockBorderWrapper"] { background-color: #ffffff; border-radius: 12px; padding: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.03); border: 1px solid #e2e8f0; }
     .card-title { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 2px; }
     .chart-desc { font-size: 11px; color: #94a3b8; font-style: italic; margin-bottom: 10px; line-height: 1.2; }
@@ -38,8 +42,8 @@ SYNC_FILE = "last_sync.txt"
 
 def safe_int(val):
     try:
-        if pd.isna(val): return 0
-        return int(val)
+        if pd.isna(val) or val is None: return 0
+        return int(float(val))
     except:
         return 0
 
@@ -122,6 +126,14 @@ def trigger_github_action(workflow_name, button_label):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_agg_data():
+    if os.path.exists(HISTORICAL_FILE):
+        try:
+            df = pd.read_csv(HISTORICAL_FILE)
+            if not df.empty and 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                return df.sort_values('Date').reset_index(drop=True)
+        except Exception: pass
+        
     csv_text = read_remote_file(HISTORICAL_FILE)
     if csv_text:
         df = pd.read_csv(StringIO(csv_text))
@@ -138,7 +150,15 @@ def load_master_parquet():
             df['Date'] = pd.to_datetime(df['Date'])
             return df
         except Exception:
-            return pd.DataFrame()
+            pass
+    try:
+        parquet_bytes = read_remote_file("nse_6yr_historical.parquet")
+        if parquet_bytes:
+            df = pd.read_parquet(BytesIO(parquet_bytes.encode('latin1')))
+            df['Date'] = pd.to_datetime(df['Date'])
+            return df
+    except Exception:
+        pass
     return pd.DataFrame()
 
 df_agg = load_agg_data()
@@ -277,7 +297,7 @@ with st.container(border=True):
     
     st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
 
-actual_date_str = f"{latest['Date'].day} {latest['Date'].strftime('%B %Y')}"
+actual_date_str = f"{st.session_state.analysis_date.day} {st.session_state.analysis_date.strftime('%B %Y')}"
 if is_live_active and st.session_state.analysis_date == max_date:
     actual_date_str = f"{actual_date_str} <span style='color:#eab308; font-weight:800;'>(⚡ LIVE INTRADAY A/D SNAPSHOT)</span>"
 
@@ -395,6 +415,7 @@ with tf_col2: timeframe = st.radio("Chart Horizon:", ["1 Month", "3 Months", "6 
 
 days_map = {"1 Month": 21, "3 Months": 63, "6 Months": 126, "1 Year": 252, "3 Years": 756, "6 Years": len(df_filtered)}
 plot_df = df_filtered.tail(days_map.get(timeframe, 126)).copy()
+plot_df['Chart_Date_Str'] = plot_df['Date'].apply(lambda x: f"{x.day} {x.strftime('%B')[:3]}")
 
 # SECTION 1: UNIVERSE EMA BREADTH
 with st.container(border=True):
@@ -480,15 +501,13 @@ with st.container(border=True):
     
     win_rate = np.where(t3_breaks > 0, (t3_wins / t3_breaks) * 100, 0)
     plot_df['Win_Rate_Plot'] = win_rate
-    plot_df['T3_Wins'] = t3_wins
-    plot_df['T3_Fails'] = t3_fails
     plot_df['T3_Total'] = t3_breaks
     
     latest_wr = plot_df['Win_Rate_Plot'].iloc[-1] if not pd.isna(plot_df['Win_Rate_Plot'].iloc[-1]) else 0
     wr_color = '#16a34a' if latest_wr > 50 else '#dc2626'
     
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>VCP BREAKOUT FOLLOW-THROUGH (T+3 WIN RATE) &nbsp;|&nbsp; LATEST: <span style='color:{wr_color};'>{latest_wr:.1f}%</span> (3-Day Cohort)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >50% confirms a healthy environment for momentum trading. Hover over bars to see total breakout volume.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate. >50% is a healthy edge. Hover over bars to see total breakout volume.</div>", unsafe_allow_html=True)
     
     colors_wr = ['#22c55e' if val >= 50 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
     
@@ -543,33 +562,56 @@ with out2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("### 🔍 Stock Level Drill-Down")
-st.markdown(f"<p style='color: #64748b; font-size: 13px;'>Filter the underlying constituent stocks for <b>{actual_date_str}</b></p>", unsafe_allow_html=True)
+
+selected_date_display = f"{st.session_state.analysis_date.day} {st.session_state.analysis_date.strftime('%B %Y')}"
+if st.session_state.analysis_date == max_date:
+    selected_date_display = actual_date_str
+st.markdown(f"<p style='color: #64748b; font-size: 13px;'>Filter the underlying constituent stocks for <b>{selected_date_display}</b></p>", unsafe_allow_html=True)
 
 @st.cache_data(ttl=300)
 def get_drilldown_data(target_date):
-    raw_df = load_master_parquet()
-    if raw_df.empty: return pd.DataFrame()
-    
-    start_date = target_date - pd.Timedelta(days=300)
-    subset = raw_df[(raw_df['Date'] >= start_date) & (raw_df['Date'] <= target_date)].copy()
-    if subset.empty: return pd.DataFrame()
-    
-    subset = subset.sort_values(['Symbol', 'Date'])
-    subset['EMA_20'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=20).mean())
-    subset['EMA_50'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=50).mean())
-    subset['EMA_200'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=200).mean())
-    
-    subset['Daily_%_Change'] = subset.groupby('Symbol')['Close'].pct_change() * 100
-    subset['1M_%_Change'] = subset.groupby('Symbol')['Close'].pct_change(periods=21) * 100
-    subset['52W_High'] = subset.groupby('Symbol')['High'].transform(lambda x: x.rolling(window=252, min_periods=200).max())
-    subset['52W_Low'] = subset.groupby('Symbol')['Low'].transform(lambda x: x.rolling(window=252, min_periods=200).min())
-    
-    closest_date = subset[subset['Date'] <= target_date]['Date'].max()
-    day_data = subset[subset['Date'] == closest_date].copy()
-    day_data['Traded_Today'] = day_data['Volume'] > 0
-    day_data['Daily_%_Change'] = day_data['Daily_%_Change'].round(2)
-    day_data['1M_%_Change'] = day_data['1M_%_Change'].round(2)
-    return day_data
+    try:
+        raw_df = load_master_parquet()
+        if raw_df.empty:
+            return pd.DataFrame()
+        
+        target_date_normalized = pd.Timestamp(target_date).normalize()
+        start_date = target_date_normalized - pd.Timedelta(days=300)
+        subset = raw_df[(raw_df['Date'] >= start_date) & (raw_df['Date'] <= target_date_normalized)].copy()
+        
+        if subset.empty:
+            return pd.DataFrame()
+        
+        subset = subset.sort_values(['Symbol', 'Date'])
+        
+        try:
+            subset['EMA_20'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=20).mean())
+            subset['EMA_50'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=50).mean())
+            subset['EMA_200'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=200).mean())
+            
+            subset['Daily_%_Change'] = subset.groupby('Symbol')['Close'].pct_change() * 100
+            subset['1M_%_Change'] = subset.groupby('Symbol')['Close'].pct_change(periods=21) * 100
+            subset['52W_High'] = subset.groupby('Symbol')['High'].transform(lambda x: x.rolling(window=252, min_periods=200).max())
+            subset['52W_Low'] = subset.groupby('Symbol')['Low'].transform(lambda x: x.rolling(window=252, min_periods=200).min())
+        except Exception as e:
+            st.error(f"Error calculating technical indicators: {str(e)}")
+            return pd.DataFrame()
+        
+        subset_dates = subset['Date'].dt.normalize()
+        closest_date = subset_dates[subset_dates <= target_date_normalized].max()
+        
+        if pd.isna(closest_date):
+            return pd.DataFrame()
+        
+        day_data = subset[subset['Date'].dt.normalize() == closest_date].copy()
+        day_data['Traded_Today'] = day_data['Volume'] > 0
+        day_data['Daily_%_Change'] = day_data['Daily_%_Change'].round(2)
+        day_data['1M_%_Change'] = day_data['1M_%_Change'].round(2)
+        
+        return day_data
+    except Exception as e:
+        st.error(f"Failed to load drill-down data: {str(e)}")
+        return pd.DataFrame()
 
 drill_col, _ = st.columns([1.5, 1])
 with drill_col:
@@ -578,7 +620,8 @@ with drill_col:
         "Up 4% or more Today", "Down 4% or more Today", "1-Month 25% Winners", "1-Month 25% Losers", "New 52-Week Highs", "New 52-Week Lows"
     ])
 
-drill_data = get_drilldown_data(latest['Date'])
+with st.spinner("🔍 Loading historical stock data..."):
+    drill_data = get_drilldown_data(st.session_state.analysis_date)
 
 if not drill_data.empty:
     res = drill_data.copy()
@@ -597,7 +640,7 @@ if not drill_data.empty:
             elif param == "New 52-Week Lows": res = res[(res['Close'] <= res['52W_Low']) & res['Traded_Today']]
 
         res = res[['Symbol', 'Close', 'Daily_%_Change', '1M_%_Change']].sort_values('Daily_%_Change', ascending=False)
-        st.write(f"**Found {len(res)} matching stocks** for {actual_date_str}:")
+        st.write(f"**Found {len(res)} matching stocks** for {selected_date_display}:")
         st.dataframe(res, use_container_width=True, height=350)
     else:
         st.info("👆 Select one or more parameters above to filter the stock list.")
