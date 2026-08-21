@@ -124,7 +124,7 @@ overall_breadth['Volume_Ratio'] = overall_breadth['Total_Up_Volume'] / overall_b
 overall_breadth['AD_Spread'] = overall_breadth['Advances'] - overall_breadth['Declines']
 overall_breadth['MCO'] = overall_breadth['AD_Spread'].ewm(span=19, adjust=False).mean() - overall_breadth['AD_Spread'].ewm(span=39, adjust=False).mean()
 
-overall_breadth['Advances'] = overall_breadth['Advances'].replace(0, 1) # Floor for TRIN numerator
+overall_breadth['Advances'] = overall_breadth['Advances'].replace(0, 1) 
 adv_dec = overall_breadth['Advances'] / overall_breadth['Declines'].replace(0, np.nan)
 up_dn_vol = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan)
 overall_breadth['TRIN'] = adv_dec / up_dn_vol
@@ -135,31 +135,17 @@ final_summary = final_summary.merge(small_breadth, on='Date', how='left')
 final_summary = final_summary.merge(micro_breadth, on='Date', how='left')
 
 # 5. Pre-calculate Composite Score
-def get_score(row, history):
-    p_fast = row.get('Pct_Above_20_EMA', 0)
-    p_slow = row.get('Pct_Above_50_EMA', 0)
-    p_blend = (0.65 * p_fast) + (0.35 * p_slow) if pd.notna(p_fast) and pd.notna(p_slow) else 0
-    
-    t3_breaks = row.get('T3_Breakouts', 0)
-    ft_rate = (row.get('T3_Wins', 0) / t3_breaks * 100) if pd.notna(t3_breaks) and t3_breaks > 0 else 0
-    vol_ratio = row.get('Volume_Ratio', 0) if pd.notna(row.get('Volume_Ratio')) else 0
-    
-    b1 = 25 if p_blend > 50 else 0
-    b2 = 25 if ft_rate > 50 else 0
-    b3 = 25 if row.get('Net_52W_High_Low', 0) > 0 else 0
-    b4 = 25 if vol_ratio > 1.0 else 0
-    return int(round(max(0, min(100, b1 + b2 + b3 + b4))))
+def get_score(row):
+    p_blend = (0.65 * row.get('Large_Pct_20_EMA', 0)) + (0.35 * row.get('Large_Pct_50_EMA', 0))
+    ft_rate = (row.get('T3_Wins', 0) / row.get('T3_Breakouts', 1) * 100) if row.get('T3_Breakouts', 0) > 0 else 0
+    return int(max(0, min(100, (25 if p_blend > 50 else 0) + (25 if ft_rate > 50 else 0) + (25 if row.get('Net_52W_High_Low', 0) > 0 else 0) + (25 if row.get('Volume_Ratio', 0) > 1.0 else 0))))
 
-scores = []
-for i in range(len(final_summary)):
-    hist_slice = final_summary.iloc[:i+1]
-    scores.append(get_score(final_summary.iloc[i], hist_slice))
-final_summary['Composite_Score'] = scores
-
+final_summary['Composite_Score'] = [get_score(row) for _, row in final_summary.iterrows()]
 final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
 output_csv = "historical_breadth_regime_6yr.csv"
 final_summary.to_csv(output_csv, index=False)
 
-# Keep trailing 300 days for Intraday script caching
-df.tail(300 * len(df['Symbol'].unique())).to_parquet("trailing_cache.parquet", index=False)
+# Keep trailing ~450 calendar days (approx 300 trading days) for Intraday caching to avoid date bugs
+cutoff_date = df['Date'].max() - pd.Timedelta(days=450)
+df[df['Date'] >= cutoff_date].to_parquet("trailing_cache.parquet", index=False)
 print("✅ Output Generated Successfully.")
