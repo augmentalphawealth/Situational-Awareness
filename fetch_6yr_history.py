@@ -4,46 +4,21 @@ import time
 import datetime
 import os
 import sys
-import pyotp
-import re
 from kiteconnect import KiteConnect
-from urllib.parse import urlparse, parse_qs
 
-api_key, api_secret, user_id, password, totp_secret = os.environ.get("KITE_API_KEY"), os.environ.get("KITE_API_SECRET"), os.environ.get("KITE_USER_ID"), os.environ.get("KITE_PASSWORD"), os.environ.get("KITE_TOTP")
+api_key = os.environ.get("KITE_API_KEY")
+access_token = os.environ.get("KITE_ACCESS_TOKEN")
 
+print("Connecting to Zerodha API for Historical Data Sync...")
 try:
-    kite = KiteConnect(api_key=api_key)
-    session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0"})
-    login_res = session.post("https://kite.zerodha.com/api/login", data={"user_id": user_id, "password": password}).json()
-    totp_token = pyotp.TOTP(totp_secret).now()
-    twofa_res = session.post("https://kite.zerodha.com/api/twofa", data={"user_id": user_id, "request_id": login_res["data"]["request_id"], "twofa_value": totp_token}).json()
-    
-    request_token = None
-    try:
-        login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
-        res = session.get(login_url, allow_redirects=True)
-        if "connect/authorize" in res.url:
-            form_data = {"action": "accept", "api_key": api_key}
-            for tag in re.findall(r'<input[^>]*>', res.text, re.IGNORECASE):
-                name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
-                if name_match: form_data[name_match.group(1)] = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE).group(1) if re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE) else ""
-            if "sess_id" in parse_qs(urlparse(res.url).query): form_data["sess_id"] = parse_qs(urlparse(res.url).query)["sess_id"][0]
-            res = session.post("https://kite.zerodha.com/connect/authorize", data=form_data, allow_redirects=True)
-    except Exception as e:
-        match = re.search(r'request_token=([a-zA-Z0-9]+)', str(e))
-        if match: request_token = match.group(1)
-
-    if not request_token:
-        request_token = parse_qs(urlparse(res.url).query).get("request_token", [None])[0] if 'res' in locals() else None
-
-    if not request_token:
-        print("❌ Failed to extract Request Token.")
+    if not api_key or not access_token:
+        print("❌ KITE_API_KEY or KITE_ACCESS_TOKEN missing.")
         sys.exit(1)
-        
-    data = kite.generate_session(request_token, api_secret=api_secret)
-    kite.set_access_token(data["access_token"])
-except Exception as e: sys.exit(1)
+    kite = KiteConnect(api_key=api_key)
+    kite.set_access_token(access_token)
+except Exception as e:
+    print("❌ Error connecting:", e)
+    sys.exit(1)
 
 instruments = kite.instruments("NSE")
 df_scripts = pd.DataFrame(instruments)
@@ -56,13 +31,18 @@ all_ohlc_data = []
 for stock in tokens_to_fetch:
     stock_data = []
     for chunk in [("2018-04-01", "2022-03-31"), ("2022-04-01", yesterday_str)]:
-        for _ in range(3):
+        for attempt in range(5):
             try:
                 res = kite.historical_data(stock['instrument_token'], chunk[0], chunk[1], "day")
                 if res: stock_data.extend(res)
                 break
-            except Exception: time.sleep(1)
-        time.sleep(0.5)
+            except Exception as e:
+                if "429" in str(e) or "403" in str(e):
+                    time.sleep(2 ** attempt) # Exponential backoff for rate limits
+                else:
+                    time.sleep(1)
+        # Guaranteed pacing to stay strictly under 3 req/sec
+        time.sleep(0.4) 
     
     if stock_data:
         df_temp = pd.DataFrame(stock_data).rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
@@ -74,7 +54,17 @@ if all_ohlc_data:
     final_df = pd.concat(all_ohlc_data, ignore_index=True)
     final_df = final_df.sort_values(by=['Symbol', 'Date']).drop_duplicates(subset=["Symbol", "Date"], keep="last")
     
+    # 98% Completeness Guard
+    unique_fetched = len(final_df['Symbol'].unique())
+    if unique_fetched < 0.98 * len(tokens_to_fetch):
+        print(f"❌ Completeness Guard Failed! Fetched {unique_fetched}/{len(tokens_to_fetch)} symbols. Aborting save.")
+        with open("fetch_errors.log", "w") as f:
+            f.write(f"[{datetime.datetime.now()}] Historical fetch failed 98% completeness threshold. Only got {unique_fetched} symbols.\n")
+        sys.exit(1)
+
     tmp_file = "nse_6yr_historical.tmp.parquet"
     final_df.to_parquet(tmp_file, index=False)
     os.replace(tmp_file, "nse_6yr_historical.parquet")
     os.system("python analyze_6yr_data.py")
+else:
+    print("❌ No historical data fetched.")
