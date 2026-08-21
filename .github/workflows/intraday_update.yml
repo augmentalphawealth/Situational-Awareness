@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: '*/15 3-10 * * 1-5'
 
+concurrency:
+  group: data-sync
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -43,6 +47,6 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git diff-index --quiet HEAD || git commit -m "Auto-update: Intraday Breadth Data [Zerodha]"
+          git diff-index --quiet HEAD || git commit -m "Auto-update: Intraday Data"
           git pull origin main --rebase -X ours || true
           git push origin main
