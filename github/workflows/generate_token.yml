@@ -1,0 +1,36 @@
+name: Daily Token Rotation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '45 0 * * 1-5'  # Runs at 6:15 AM IST Monday-Friday
+
+jobs:
+  rotate-token:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run Token Injector
+        env:
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          KITE_USER_ID: ${{ secrets.KITE_USER_ID }}
+          KITE_PASSWORD: ${{ secrets.KITE_PASSWORD }}
+          KITE_TOTP: ${{ secrets.KITE_TOTP }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          python update_kite_token.py
