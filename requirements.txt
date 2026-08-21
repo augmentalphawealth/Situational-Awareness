@@ -7,6 +7,5 @@ kiteconnect
 pyotp
 pyarrow
 fastparquet
-logzero
 PyNaCl
 playwright
