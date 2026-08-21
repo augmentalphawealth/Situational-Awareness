@@ -69,7 +69,21 @@ except Exception as e:
     print("⚠️ Holiday guard check failed, proceeding with caution.", e)
 
 cache_file = "trailing_cache.parquet"
-if not os.path.exists(cache_file): sys.exit(1)
+
+# DYNAMIC CACHE REBUILDER
+if not os.path.exists(cache_file):
+    print(f"⚠️ {cache_file} not found. Attempting to build it from the master database...")
+    master_file = "nse_6yr_historical.parquet"
+    if os.path.exists(master_file):
+        df_master = pd.read_parquet(master_file)
+        df_master['Date'] = pd.to_datetime(df_master['Date'])
+        cutoff_date = df_master['Date'].max() - pd.Timedelta(days=450)
+        df_cache = df_master[df_master['Date'] >= cutoff_date]
+        df_cache.to_parquet(cache_file, index=False)
+        print("✅ Cache built successfully.")
+    else:
+        print(f"❌ Master database '{master_file}' is also missing. Cannot proceed.")
+        sys.exit(1)
 
 df_hist = pd.read_parquet(cache_file)
 df_hist['Date'] = pd.to_datetime(df_hist['Date'])
