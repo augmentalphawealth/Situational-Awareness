@@ -3,7 +3,7 @@ name: Daily Token Rotation
 on:
   workflow_dispatch:
   schedule:
-    - cron: '45 0 * * 1-5'  # Runs at 6:15 AM IST Monday-Friday
+    - cron: '45 0 * * 1-5'  
 
 jobs:
   rotate-token:
