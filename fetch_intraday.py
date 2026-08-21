@@ -25,21 +25,28 @@ try:
     totp_token = pyotp.TOTP(totp_secret).now()
     twofa_res = session.post("https://kite.zerodha.com/api/twofa", data={"user_id": user_id, "request_id": login_res["data"]["request_id"], "twofa_value": totp_token}).json()
     
-    def get_token(url): return parse_qs(urlparse(url).query).get("request_token", [None])[0]
-    login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
-    res = session.get(login_url, allow_redirects=True)
-    if "connect/authorize" in res.url:
-        form_data = {}
-        for tag in re.findall(r'<input[^>]*>', res.text, re.IGNORECASE):
-            name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
-            if name_match:
-                val_match = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE)
-                form_data[name_match.group(1)] = val_match.group(1) if val_match else ""
-        form_data.update({"action": "accept", "api_key": api_key})
-        if "sess_id" in parse_qs(urlparse(res.url).query): form_data["sess_id"] = parse_qs(urlparse(res.url).query)["sess_id"][0]
-        res = session.post("https://kite.zerodha.com/connect/authorize", data=form_data, allow_redirects=True)
-    
-    request_token = next((get_token(r.url) for r in res.history + [res] if get_token(r.url)), None)
+    request_token = None
+    try:
+        login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
+        res = session.get(login_url, allow_redirects=True)
+        if "connect/authorize" in res.url:
+            form_data = {"action": "accept", "api_key": api_key}
+            for tag in re.findall(r'<input[^>]*>', res.text, re.IGNORECASE):
+                name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+                if name_match: form_data[name_match.group(1)] = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE).group(1) if re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE) else ""
+            if "sess_id" in parse_qs(urlparse(res.url).query): form_data["sess_id"] = parse_qs(urlparse(res.url).query)["sess_id"][0]
+            res = session.post("https://kite.zerodha.com/connect/authorize", data=form_data, allow_redirects=True)
+    except Exception as e:
+        match = re.search(r'request_token=([a-zA-Z0-9]+)', str(e))
+        if match: request_token = match.group(1)
+
+    if not request_token:
+        request_token = parse_qs(urlparse(res.url).query).get("request_token", [None])[0] if 'res' in locals() else None
+
+    if not request_token:
+        print("❌ Failed to extract Request Token.")
+        sys.exit(1)
+        
     data = kite.generate_session(request_token, api_secret=api_secret)
     kite.set_access_token(data["access_token"])
 except Exception as e:
@@ -73,14 +80,13 @@ for chunk in chunks:
                     })
                 break
         except Exception: time.sleep(1)
-    time.sleep(1.1)  # Strictly respect 1 req/sec Quote API limit
+    time.sleep(1.1)  
 
 df_live = pd.DataFrame(new_rows)
 df_live['Date'] = pd.to_datetime(df_live['Date']).dt.normalize()
 df_hist = df_hist[df_hist['Date'] != today_dt]
 df = pd.concat([df_hist, df_live], ignore_index=True).sort_values(['Symbol', 'Date']).reset_index(drop=True)
 
-# 1. Indicators
 df['Daily_Turnover'] = df['Close'] * df['Volume']
 df['Turnover_45d_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(window=45, min_periods=10).mean())
 df['Cap_Rank'] = df.groupby('Date')['Turnover_45d_Avg'].rank(ascending=False, method='min')
@@ -113,7 +119,6 @@ df['Down_25_1M'] = df['Pct_1M'] <= -25.0
 df['New_52W_High'] = (df['Close'] >= df['Rolling_52W_High']) & traded_today
 df['New_52W_Low'] = (df['Close'] <= df['Rolling_52W_Low']) & traded_today
 
-# 2. Intraday Breakout (1.0x Volume)
 df['Prev_Close'] = df.groupby('Symbol')['Close'].shift(1)
 df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Prev_Close']), abs(df['Low'] - df['Prev_Close'])))
 df['ATR_14'] = df.groupby('Symbol')['TR'].transform(lambda x: x.ewm(alpha=1/14, min_periods=14, adjust=False).mean())
@@ -122,11 +127,10 @@ df['Max_20D_Prior'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1
 
 df['20D_High'] = df['Close'] > df['Max_20D_Prior']
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
-df['Volume_Surge'] = df['Volume'] > df['Vol_20D_Avg'] # 1.0x For Intraday
+df['Volume_Surge'] = df['Volume'] > df['Vol_20D_Avg'] 
 
 prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).fillna(False).astype(bool)
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
-
 df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).fillna(False).astype(bool)
 df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
 df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3d_ago'])
@@ -134,7 +138,6 @@ df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3
 df['Up_Volume'] = np.where(df['Gainer'], df['Daily_Turnover'], 0)
 df['Down_Volume'] = np.where(df['Loser'], df['Daily_Turnover'], 0)
 
-# 3. Aggregations
 def get_liq_breadth(data, liq_name, prefix):
     liq_df = data[data['Liquidity_Category'] == liq_name]
     aggregated = liq_df.groupby('Date').agg(
@@ -166,14 +169,12 @@ overall_breadth['Rolling_3D_Up_4'] = overall_breadth['Up_4_Count'].rolling(windo
 overall_breadth['Rolling_3D_Down_4'] = overall_breadth['Down_4_Count'].rolling(window=3).sum()
 overall_breadth['Net_52W_High_Low'] = overall_breadth['New_52W_Highs'] - overall_breadth['New_52W_Lows']
 overall_breadth['Volume_Ratio'] = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan)
-
 overall_breadth['AD_Spread'] = overall_breadth['Advances'] - overall_breadth['Declines']
 overall_breadth['MCO'] = overall_breadth['AD_Spread'].ewm(span=19, adjust=False).mean() - overall_breadth['AD_Spread'].ewm(span=39, adjust=False).mean()
 overall_breadth['TRIN'] = (overall_breadth['Advances'] / overall_breadth['Declines'].replace(0, np.nan)) / (overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan))
 
 final_summary = overall_breadth.merge(large_breadth, on='Date', how='left').merge(mid_breadth, on='Date', how='left').merge(small_breadth, on='Date', how='left').merge(micro_breadth, on='Date', how='left')
 
-# Pre-calc Score
 def get_score(row):
     p_blend = (0.65 * row.get('Large_Pct_20_EMA', 0)) + (0.35 * row.get('Large_Pct_50_EMA', 0))
     ft_rate = (row.get('T3_Wins', 0) / row.get('T3_Breakouts', 1) * 100) if row.get('T3_Breakouts', 0) > 0 else 0
