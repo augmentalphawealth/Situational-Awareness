@@ -26,32 +26,39 @@ def get_request_token():
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         page = context.new_page()
         
+        extracted_token = []
+
+        # Background Network Listener to catch the token mid-flight before localhost crashes
+        def intercept_request(request):
+            if "request_token=" in request.url:
+                token = parse_qs(urlparse(request.url).query).get("request_token", [None])
+                if token and token[0]:
+                    extracted_token.append(token[0])
+
+        page.on("request", intercept_request)
+        
         try:
             login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
             page.goto(login_url, wait_until="domcontentloaded")
             
             # 1. Login Screen
-            page.wait_for_selector("input[type='text']", timeout=15000)
-            page.fill("input[type='text']", user_id)
-            page.fill("input[type='password']", password)
+            page.wait_for_selector("#userid", timeout=15000)
+            page.fill("#userid", user_id)
+            page.fill("#password", password)
             page.click("button[type='submit']")
             
             # 2. Two-Factor Authentication (2FA) Screen
-            # Wait for the password field to disappear to confirm 2FA screen has loaded
             page.wait_for_selector("input[type='password']", state="hidden", timeout=15000)
-            time.sleep(2)  # Critical pause for the 2FA DOM to render
+            time.sleep(2)  
             
             totp_token = pyotp.TOTP(totp_secret).now()
             
-            # Fault-tolerant 2FA input targeting the morphed number field
             try:
                 totp_input = page.locator("input[type='number'], input[label*='TOTP']").first
                 totp_input.fill(totp_token)
             except Exception:
-                # Fallback: If elements change again, rely on Kite's auto-focus and type directly
                 page.keyboard.type(totp_token)
                 
-            # Click submit if Kite doesn't auto-submit the 6 digits
             try:
                 submit_2fa = page.locator("button[type='submit']")
                 if submit_2fa.is_visible(timeout=2000):
@@ -59,15 +66,11 @@ def get_request_token():
             except:
                 pass
             
-            # 3. Wait for redirect URL or handle the App Authorization screen
-            request_token = None
+            # 3. Wait for the network listener to catch the token
             for _ in range(25):
-                current_url = page.url
-                if "request_token=" in current_url:
-                    request_token = parse_qs(urlparse(current_url).query).get("request_token", [None])[0]
+                if extracted_token:
                     break
                 
-                # If Zerodha asks to authorize the API App, click the button
                 try:
                     auth_btn = page.locator("button:has-text('Authorize'), button:has-text('I understand'), button:has-text('Accept')")
                     if auth_btn.count() > 0 and auth_btn.first.is_visible():
@@ -77,11 +80,11 @@ def get_request_token():
                     
                 time.sleep(1)
             
-            if not request_token:
+            if not extracted_token:
                 print(f"❌ Timeout reached. Final URL was: {page.url}")
                 
             browser.close()
-            return request_token
+            return extracted_token[0] if extracted_token else None
             
         except Exception as e:
             print(f"❌ Browser Automation Error: {e}")
