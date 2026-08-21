@@ -149,8 +149,9 @@ c6_penalty = np.where(gap >= 25, np.maximum(-15, (gap - 25) * -0.5), 0)
 min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20).min()
 c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
 
-raw_score = pd.Series(c1_breadth) + pd.Series(c2_breakout) + c3_momentum + c4_vol_hl + pd.Series(c5_lt) + pd.Series(c6_penalty) + pd.Series(c7_bonus)
-final_summary['Composite_Score'] = raw_score.clip(lower=0, upper=100).round().astype(int)
+# FIXED LINE: Safely wrap and fill all components before integer cast
+raw_score = pd.Series(c1_breadth).fillna(0) + pd.Series(c2_breakout).fillna(0) + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + pd.Series(c5_lt).fillna(0) + pd.Series(c6_penalty).fillna(0) + pd.Series(c7_bonus).fillna(0)
+final_summary['Composite_Score'] = raw_score.fillna(0).clip(lower=0, upper=100).round().astype(int)
 
 final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
 output_csv = "historical_breadth_regime_6yr.csv"
