@@ -36,6 +36,13 @@ HISTORICAL_FILE = "historical_breadth_regime_6yr.csv"
 INTRADAY_FILE = "live_intraday_breadth.csv"
 SYNC_FILE = "last_sync.txt"
 
+def safe_int(val):
+    try:
+        if pd.isna(val): return 0
+        return int(val)
+    except:
+        return 0
+
 def get_latest_commit_sha():
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits/{BRANCH}?t={int(time.time())}"
     headers = {"Accept": "application/vnd.github.v3+json", "Cache-Control": "no-cache, no-store, must-revalidate"}
@@ -123,6 +130,20 @@ def load_agg_data():
             return df.sort_values('Date').reset_index(drop=True)
     return pd.DataFrame()
 
+# ==========================================
+# FIX 1: OOM CRASH PREVENTION (Global Cache)
+# ==========================================
+@st.cache_data(max_entries=1, show_spinner=False)
+def load_master_parquet():
+    if os.path.exists("nse_6yr_historical.parquet"):
+        try:
+            df = pd.read_parquet("nse_6yr_historical.parquet")
+            df['Date'] = pd.to_datetime(df['Date'])
+            return df
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
+
 df_agg = load_agg_data()
 if df_agg.empty:
     st.error(f"Data file '{HISTORICAL_FILE}' not found. Please run the Historical or EOD script to generate it.")
@@ -198,7 +219,7 @@ if df_filtered.empty:
 latest = df_filtered.iloc[-1]
 prev = df_filtered.iloc[-2] if len(df_filtered) > 1 else latest
 
-score = int(latest.get('Composite_Score', 0))
+score = safe_int(latest.get('Composite_Score', 0))
 p_fast = latest.get('Pct_Above_20_EMA', 0)
 ft_rate = (latest.get('T3_Wins', 0) / latest.get('T3_Breakouts', 1) * 100) if latest.get('T3_Breakouts', 0) > 0 else 0
 
@@ -219,7 +240,8 @@ else:
     tacs = {"asset": "CASH", "sizing": "0% (Pure Cash)", "risk": "Sit on hands", "profit": "Build watchlists; wait for a bounce"}
 
 df_10d = df_filtered.tail(10).copy()
-df_10d['Date_Str'] = df_10d['Date'].dt.strftime('%d %b')
+# FIX 2: Day Month formatting for charts
+df_10d['Date_Str'] = df_10d['Date'].apply(lambda x: f"{x.day} {x.strftime('%B')[:3]}")
 
 def get_bar_color(val):
     if val >= 71: return "#22c55e"
@@ -257,7 +279,8 @@ with st.container(border=True):
     
     st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
 
-actual_date_str = latest['Date'].strftime('%d').lstrip('0') + latest['Date'].strftime(' %B %Y')
+# FIX 2: Full spelled out date display natively rendering "21 August 2026"
+actual_date_str = f"{latest['Date'].day} {latest['Date'].strftime('%B %Y')}"
 if is_live_active and st.session_state.analysis_date == max_date:
     actual_date_str = f"{actual_date_str} <span style='color:#eab308; font-weight:800;'>(⚡ LIVE INTRADAY A/D SNAPSHOT)</span>"
 
@@ -265,20 +288,20 @@ st.markdown(f"<p style='color: #475569; font-size: 13px; font-weight: 600; margi
 
 hero_col1, hero_col2 = st.columns([1.5, 2.5])
 
-advances = int(latest.get('Advances', 0))
-declines = int(latest.get('Declines', 0))
-total_univ = int(latest.get('Total_Universe', 2400))
+advances = safe_int(latest.get('Advances', 0))
+declines = safe_int(latest.get('Declines', 0))
+total_univ = safe_int(latest.get('Total_Universe', 2400))
 
 if is_live_active and st.session_state.analysis_date == max_date:
-    advances = int(live_latest.get('Advances', advances))
-    declines = int(live_latest.get('Declines', declines))
-    total_univ = int(live_latest.get('Total_Universe', total_univ))
+    advances = safe_int(live_latest.get('Advances', advances))
+    declines = safe_int(live_latest.get('Declines', declines))
+    total_univ = safe_int(live_latest.get('Total_Universe', total_univ))
 
 total_adv_dec = advances + declines
 adv_pct = round((advances / total_adv_dec) * 100, 1) if total_adv_dec > 0 else 0
 
-prev_advances = int(prev.get('Advances', 0))
-prev_declines = int(prev.get('Declines', 0))
+prev_advances = safe_int(prev.get('Advances', 0))
+prev_declines = safe_int(prev.get('Declines', 0))
 prev_total_adv_dec = prev_advances + prev_declines
 prev_adv_pct = round((prev_advances / prev_total_adv_dec) * 100, 1) if prev_total_adv_dec > 0 else 0
 adv_change = round(adv_pct - prev_adv_pct, 1)
@@ -354,7 +377,7 @@ with m2:
         st.plotly_chart(fig_m2, use_container_width=True, config={'displayModeBar': False})
 
 with m3:
-    net_hl = int(latest['Net_52W_High_Low']) if pd.notna(latest['Net_52W_High_Low']) else 0
+    net_hl = safe_int(latest.get('Net_52W_High_Low', 0))
     h_col = "#22c55e" if net_hl > 0 else "#ef4444"
     with st.container(border=True):
         st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 5px;'>Net 52-Week Highs vs Lows</div>", unsafe_allow_html=True)
@@ -375,6 +398,7 @@ with tf_col2: timeframe = st.radio("Chart Horizon:", ["1 Month", "3 Months", "6 
 
 days_map = {"1 Month": 21, "3 Months": 63, "6 Months": 126, "1 Year": 252, "3 Years": 756, "6 Years": len(df_filtered)}
 plot_df = df_filtered.tail(days_map.get(timeframe, 126)).copy()
+plot_df['Chart_Date_Str'] = plot_df['Date'].apply(lambda x: f"{x.day} {x.strftime('%B')[:3]}")
 
 # SECTION 1: UNIVERSE EMA BREADTH
 with st.container(border=True):
@@ -502,7 +526,10 @@ with st.container(border=True):
 out1, out2 = st.columns(2)
 with out1:
     with st.container(border=True):
-        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>ROLLING 1-MONTH 25% MOVERS &nbsp;|&nbsp; LATEST: <span style='color:#16a34a;'>{int(plot_df['Up_25_1M_Count'].iloc[-1])} UP</span> / <span style='color:#dc2626;'>{int(plot_df['Down_25_1M_Count'].iloc[-1])} DOWN</span></div>", unsafe_allow_html=True)
+        latest_up_25 = safe_int(plot_df['Up_25_1M_Count'].iloc[-1]) if not plot_df['Up_25_1M_Count'].empty else 0
+        latest_dn_25 = safe_int(plot_df['Down_25_1M_Count'].iloc[-1]) if not plot_df['Down_25_1M_Count'].empty else 0
+        
+        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>ROLLING 1-MONTH 25% MOVERS &nbsp;|&nbsp; LATEST: <span style='color:#16a34a;'>{latest_up_25} UP</span> / <span style='color:#dc2626;'>{latest_dn_25} DOWN</span></div>", unsafe_allow_html=True)
         st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Identifies structural outliers. More up-movers than down-movers signifies strong momentum thrusts.</div>", unsafe_allow_html=True)
         
         fig_outliers = go.Figure()
@@ -515,7 +542,10 @@ with out1:
 
 with out2:
     with st.container(border=True):
-        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>3-DAY ROLLING 4% THRUST MOVERS &nbsp;|&nbsp; LATEST: <span style='color:#16a34a;'>{int(plot_df['Rolling_3D_Up_4'].iloc[-1])} UP</span> / <span style='color:#dc2626;'>{int(plot_df['Rolling_3D_Down_4'].iloc[-1])} DOWN</span></div>", unsafe_allow_html=True)
+        latest_up_4 = safe_int(plot_df['Rolling_3D_Up_4'].iloc[-1]) if not plot_df['Rolling_3D_Up_4'].empty else 0
+        latest_dn_4 = safe_int(plot_df['Rolling_3D_Down_4'].iloc[-1]) if not plot_df['Rolling_3D_Down_4'].empty else 0
+        
+        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>3-DAY ROLLING 4% THRUST MOVERS &nbsp;|&nbsp; LATEST: <span style='color:#16a34a;'>{latest_up_4} UP</span> / <span style='color:#dc2626;'>{latest_dn_4} DOWN</span></div>", unsafe_allow_html=True)
         st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Measures short-term explosive price action. Clusters of Up 4%+ days initiate new bull phases.</div>", unsafe_allow_html=True)
         
         fig_movers = go.Figure()
@@ -532,31 +562,29 @@ st.markdown(f"<p style='color: #64748b; font-size: 13px;'>Filter the underlying 
 
 @st.cache_data(ttl=300)
 def get_drilldown_data(target_date):
-    try:
-        raw_df = pd.read_parquet("nse_6yr_historical.parquet")
-        raw_df['Date'] = pd.to_datetime(raw_df['Date'])
-        start_date = target_date - pd.Timedelta(days=300)
-        subset = raw_df[(raw_df['Date'] >= start_date) & (raw_df['Date'] <= target_date)].copy()
-        subset = subset.sort_values(['Symbol', 'Date'])
-        
-        subset['EMA_20'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=20).mean())
-        subset['EMA_50'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=50).mean())
-        subset['EMA_200'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=200).mean())
-        
-        subset['Daily_%_Change'] = subset.groupby('Symbol')['Close'].pct_change() * 100
-        subset['1M_%_Change'] = subset.groupby('Symbol')['Close'].pct_change(periods=21) * 100
-        
-        subset['52W_High'] = subset.groupby('Symbol')['High'].transform(lambda x: x.rolling(window=252, min_periods=200).max())
-        subset['52W_Low'] = subset.groupby('Symbol')['Low'].transform(lambda x: x.rolling(window=252, min_periods=200).min())
-        
-        closest_date = subset[subset['Date'] <= target_date]['Date'].max()
-        day_data = subset[subset['Date'] == closest_date].copy()
-        day_data['Traded_Today'] = day_data['Volume'] > 0
-        day_data['Daily_%_Change'] = day_data['Daily_%_Change'].round(2)
-        day_data['1M_%_Change'] = day_data['1M_%_Change'].round(2)
-        return day_data
-    except Exception:
-        return pd.DataFrame()
+    raw_df = load_master_parquet()
+    if raw_df.empty: return pd.DataFrame()
+    
+    start_date = target_date - pd.Timedelta(days=300)
+    subset = raw_df[(raw_df['Date'] >= start_date) & (raw_df['Date'] <= target_date)].copy()
+    if subset.empty: return pd.DataFrame()
+    
+    subset = subset.sort_values(['Symbol', 'Date'])
+    subset['EMA_20'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=20).mean())
+    subset['EMA_50'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=50).mean())
+    subset['EMA_200'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=200).mean())
+    
+    subset['Daily_%_Change'] = subset.groupby('Symbol')['Close'].pct_change() * 100
+    subset['1M_%_Change'] = subset.groupby('Symbol')['Close'].pct_change(periods=21) * 100
+    subset['52W_High'] = subset.groupby('Symbol')['High'].transform(lambda x: x.rolling(window=252, min_periods=200).max())
+    subset['52W_Low'] = subset.groupby('Symbol')['Low'].transform(lambda x: x.rolling(window=252, min_periods=200).min())
+    
+    closest_date = subset[subset['Date'] <= target_date]['Date'].max()
+    day_data = subset[subset['Date'] == closest_date].copy()
+    day_data['Traded_Today'] = day_data['Volume'] > 0
+    day_data['Daily_%_Change'] = day_data['Daily_%_Change'].round(2)
+    day_data['1M_%_Change'] = day_data['1M_%_Change'].round(2)
+    return day_data
 
 drill_col, _ = st.columns([1.5, 1])
 with drill_col:
