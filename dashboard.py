@@ -8,7 +8,6 @@ import os
 import datetime
 from io import StringIO
 from zoneinfo import ZoneInfo
-from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Situational Awareness Engine", layout="wide", initial_sidebar_state="collapsed")
 
@@ -176,7 +175,7 @@ with head_col2:
     nav1, nav2, nav3 = st.columns([1, 1.4, 1])
     with nav1: st.button("◀ Prev", on_click=step_prev_day, use_container_width=True)
     with nav2:
-        selected_date = st.date_input("📅 Historical Date", value=st.session_state.analysis_date, min_value=min_date, max_value=max_date, format="DD/MM/YYYY")
+        selected_date = st.date_input("📅 Select Historical Date", value=st.session_state.analysis_date, min_value=min_date, max_value=max_date, format="DD/MM/YYYY")
         if selected_date != st.session_state.analysis_date.date():
             st.session_state.analysis_date = pd.to_datetime(selected_date)
             st.rerun()
@@ -396,7 +395,6 @@ with tf_col2: timeframe = st.radio("Chart Horizon:", ["1 Month", "3 Months", "6 
 
 days_map = {"1 Month": 21, "3 Months": 63, "6 Months": 126, "1 Year": 252, "3 Years": 756, "6 Years": len(df_filtered)}
 plot_df = df_filtered.tail(days_map.get(timeframe, 126)).copy()
-plot_df['Chart_Date_Str'] = plot_df['Date'].apply(lambda x: f"{x.day} {x.strftime('%B')[:3]}")
 
 # SECTION 1: UNIVERSE EMA BREADTH
 with st.container(border=True):
@@ -490,7 +488,7 @@ with st.container(border=True):
     wr_color = '#16a34a' if latest_wr > 50 else '#dc2626'
     
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>VCP BREAKOUT FOLLOW-THROUGH (T+3 WIN RATE) &nbsp;|&nbsp; LATEST: <span style='color:{wr_color};'>{latest_wr:.1f}%</span> (3-Day Cohort)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate. >50% is a healthy edge. Hover over bars to see the exact breakout volume.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >50% confirms a healthy environment for momentum trading. Hover over bars to see total breakout volume.</div>", unsafe_allow_html=True)
     
     colors_wr = ['#22c55e' if val >= 50 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
     
