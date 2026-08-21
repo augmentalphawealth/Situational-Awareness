@@ -66,7 +66,6 @@ df['20D_High'] = df['Close'] > df['Max_20D_Prior']
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
 df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 1.5)
 
-# PANDAS WARNING FIX: Use math casting instead of fillna(False)
 prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).astype(float).fillna(0.0).astype(bool)
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
 
@@ -133,11 +132,11 @@ net_4d = df_score['Rolling_3D_Up_4'] - df_score['Rolling_3D_Down_4']
 net_1m = df_score['Up_25_1M_Count'] - df_score['Down_25_1M_Count']
 rank_4d = net_4d.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_1m = net_1m.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
-c3_momentum = (rank_4d * 10) + (rank_1m * 10)
+c3_momentum = pd.Series((rank_4d * 10) + (rank_1m * 10)).fillna(0)
 
 rank_vol = df_score['Volume_Ratio'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_hl = df_score['Net_52W_High_Low'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
-c4_vol_hl = np.where(df_score['Volume_Ratio'] > 1.0, rank_vol * 10, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 10, 0)
+c4_vol_hl = pd.Series(np.where(df_score['Volume_Ratio'] > 1.0, rank_vol * 10, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 10, 0)).fillna(0)
 
 p200 = df_score['Pct_Above_200_EMA']
 p200_slope = p200.diff(20) 
@@ -150,7 +149,7 @@ c6_penalty = np.where(gap >= 25, np.maximum(-15, (gap - 25) * -0.5), 0)
 min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20).min()
 c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
 
-raw_score = c1_breadth + c2_breakout + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + c5_lt + c6_penalty + c7_bonus
+raw_score = pd.Series(c1_breadth) + pd.Series(c2_breakout) + c3_momentum + c4_vol_hl + pd.Series(c5_lt) + pd.Series(c6_penalty) + pd.Series(c7_bonus)
 final_summary['Composite_Score'] = raw_score.clip(lower=0, upper=100).round().astype(int)
 
 final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
