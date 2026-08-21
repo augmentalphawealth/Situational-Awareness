@@ -212,6 +212,7 @@ with head_col3:
                 st.session_state.sync_in_progress = False
                 load_agg_data.clear()
                 load_intraday_time.clear()
+                if 'get_drilldown_data' in st.cache_data: get_drilldown_data.clear()
                 st.success("✅ Sync Complete! Reloading...")
                 time.sleep(1)
                 st.rerun()
@@ -501,13 +502,15 @@ with st.container(border=True):
     
     win_rate = np.where(t3_breaks > 0, (t3_wins / t3_breaks) * 100, 0)
     plot_df['Win_Rate_Plot'] = win_rate
+    plot_df['T3_Wins'] = t3_wins
+    plot_df['T3_Fails'] = t3_fails
     plot_df['T3_Total'] = t3_breaks
     
     latest_wr = plot_df['Win_Rate_Plot'].iloc[-1] if not pd.isna(plot_df['Win_Rate_Plot'].iloc[-1]) else 0
     wr_color = '#16a34a' if latest_wr > 50 else '#dc2626'
     
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>VCP BREAKOUT FOLLOW-THROUGH (T+3 WIN RATE) &nbsp;|&nbsp; LATEST: <span style='color:{wr_color};'>{latest_wr:.1f}%</span> (3-Day Cohort)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate. >50% is a healthy edge. Hover over bars to see total breakout volume.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >50% confirms a healthy environment for momentum trading. Hover over bars to see total breakout volume.</div>", unsafe_allow_html=True)
     
     colors_wr = ['#22c55e' if val >= 50 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
     
