@@ -8,6 +8,7 @@ import os
 import datetime
 from io import StringIO
 from zoneinfo import ZoneInfo
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Situational Awareness Engine", layout="wide", initial_sidebar_state="collapsed")
 
@@ -64,6 +65,11 @@ def get_last_updated_time():
     return "Unknown"
 
 last_sync_time = get_last_updated_time()
+
+if 'sync_in_progress' not in st.session_state:
+    st.session_state.sync_in_progress = False
+    st.session_state.sync_start_time = 0
+    st.session_state.pre_sync_time = ""
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_intraday_time():
@@ -151,21 +157,38 @@ with head_col2:
     nav1, nav2, nav3 = st.columns([1, 1.4, 1])
     with nav1: st.button("◀ Prev", on_click=step_prev_day, use_container_width=True)
     with nav2:
-        # User requested DD/MM/YYYY formatting for the date picker
         selected = st.date_input("Date", value=st.session_state.analysis_date, min_value=min_date, max_value=max_date, label_visibility="collapsed", format="DD/MM/YYYY")
         st.session_state.analysis_date = pd.to_datetime(selected)
     with nav3: st.button("Next ▶", on_click=step_next_day, use_container_width=True)
 with head_col3:
     display_sync = last_sync_display if st.session_state.analysis_date == max_date else "Historical View"
     st.markdown(f"<div style='text-align: right; font-size: 11px; font-weight: 600; color: #64748b; margin-top: 2px; margin-bottom: 3px;'>Last Sync: {display_sync}</div>", unsafe_allow_html=True)
-    if st.button("⚡ Trigger Intraday Sync", use_container_width=True):
-        if trigger_github_action("intraday_update.yml", "Intraday Sync"):
-            st.success("GitHub bot activated! Please wait 2 mins, then click Refresh below.")
-            
-if st.button("🔄 Refresh Dashboard", type="secondary", use_container_width=True):
-    load_agg_data.clear()
-    load_intraday_time.clear()
-    st.rerun()
+    
+    if st.session_state.sync_in_progress:
+        elapsed_time = time.time() - st.session_state.sync_start_time
+        if elapsed_time < 420: 
+            current_sync_time = get_last_updated_time()
+            if current_sync_time != st.session_state.pre_sync_time and current_sync_time != "Unknown":
+                st.session_state.sync_in_progress = False
+                load_agg_data.clear()
+                load_intraday_time.clear()
+                st.success("✅ Sync Complete! Reloading...")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.info(f"⏳ Bot is crunching data... Auto-refreshing. (Elapsed: {int(elapsed_time)}s)")
+                time.sleep(4)
+                st.rerun()
+        else:
+            st.session_state.sync_in_progress = False
+            st.error("Sync timed out. Please try again.")
+    else:
+        if st.button("⚡ Trigger Intraday Sync", use_container_width=True):
+            if trigger_github_action("intraday_update.yml", "Intraday Sync"):
+                st.session_state.sync_in_progress = True
+                st.session_state.sync_start_time = time.time()
+                st.session_state.pre_sync_time = last_sync_display
+                st.rerun()
 
 df_filtered = df_agg[df_agg['Date'] <= st.session_state.analysis_date].copy()
 if df_filtered.empty:
@@ -223,19 +246,18 @@ with st.container(border=True):
             x=df_10d['Date_Str'], y=df_10d['Composite_Score'], 
             marker_color=[get_bar_color(v) for v in df_10d['Composite_Score']],
             text=df_10d['Composite_Score'], 
-            textposition='outside', # Fix 2: Force text outside the bar
-            textangle=0,            # Fix 2: Force text strictly horizontal
+            textposition='outside', 
+            textangle=0,            
             hovertemplate='Score: <b>%{y}</b><extra></extra>'
         ))
         fig_m1.update_layout(height=120, margin=dict(l=10, r=10, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
         fig_m1.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
-        fig_m1.update_yaxes(visible=False, range=[0, 115]) # Headroom for outside text
+        fig_m1.update_yaxes(visible=False, range=[0, 115]) 
         st.plotly_chart(fig_m1, use_container_width=True, config={'displayModeBar': False})
     
     st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
 
-# Formatting Date as "21 August 2026"
-actual_date_str = latest['Date'].strftime('%d %B %Y')
+actual_date_str = latest['Date'].strftime('%d').lstrip('0') + latest['Date'].strftime(' %B %Y')
 if is_live_active and st.session_state.analysis_date == max_date:
     actual_date_str = f"{actual_date_str} <span style='color:#eab308; font-weight:800;'>(⚡ LIVE INTRADAY A/D SNAPSHOT)</span>"
 
@@ -430,27 +452,49 @@ with tac_col2:
         fig_trin.update_xaxes(showgrid=False)
         st.plotly_chart(fig_trin, use_container_width=True)
 
-# SECTION 4: BREAKOUT SUCCESS & FOLLOW-THROUGH (NOW A BAR CHART)
+# SECTION 4: BREAKOUT SUCCESS DUAL-AXIS STACKED CHART
 with st.container(border=True):
-    t3_wins_series = plot_df.get('T3_Wins', pd.Series([0]))
-    t3_breaks_series = plot_df.get('T3_Breakouts', pd.Series([1])).replace(0, np.nan)
-    plot_df['Win_Rate_Plot'] = (t3_wins_series / t3_breaks_series) * 100
+    t3_wins = plot_df.get('T3_Wins', pd.Series([0])).fillna(0)
+    t3_breaks = plot_df.get('T3_Breakouts', pd.Series([0])).fillna(0)
+    t3_fails = (t3_breaks - t3_wins).clip(lower=0)
+    
+    win_rate = np.where(t3_breaks > 0, (t3_wins / t3_breaks) * 100, 0)
+    plot_df['Win_Rate_Plot'] = win_rate
+    
     latest_wr = plot_df['Win_Rate_Plot'].iloc[-1] if not pd.isna(plot_df['Win_Rate_Plot'].iloc[-1]) else 0
     wr_color = '#16a34a' if latest_wr > 50 else '#dc2626'
     
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>VCP BREAKOUT FOLLOW-THROUGH (T+3 WIN RATE) &nbsp;|&nbsp; LATEST: <span style='color:{wr_color};'>{latest_wr:.1f}%</span> (3-Day Cohort)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >50% confirms a healthy environment for momentum trading.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Bar Height = Total Breakouts 3 days ago. Green = Closed higher today (Win). Red = Failed. Line = Win Rate %. >50% is a healthy edge.</div>", unsafe_allow_html=True)
     
-    # Fix 4: Converted to a dynamic Bar Chart with conditional colors
-    colors_wr = ['#22c55e' if val >= 50 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
-    fig_ft = go.Figure(go.Bar(
-        x=plot_df['Date'], y=plot_df['Win_Rate_Plot'], name='T+3 Win Rate %',
-        marker_color=colors_wr, textangle=0,
+    fig_ft = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    fig_ft.add_trace(go.Bar(
+        x=plot_df['Date'], y=t3_wins, name='Successful Breakouts',
+        marker_color='#22c55e', hovertemplate='Wins: %{y}<extra></extra>'
+    ), secondary_y=False)
+    
+    fig_ft.add_trace(go.Bar(
+        x=plot_df['Date'], y=t3_fails, name='Failed Breakouts',
+        marker_color='#ef4444', hovertemplate='Fails: %{y}<extra></extra>'
+    ), secondary_y=False)
+    
+    fig_ft.add_trace(go.Scatter(
+        x=plot_df['Date'], y=plot_df['Win_Rate_Plot'], name='Win Rate %',
+        mode='lines+markers', line=dict(color='#8b5cf6', width=2), marker=dict(size=4),
         hovertemplate='Win Rate: %{y:.1f}%<extra></extra>'
-    ))
-    fig_ft.add_hline(y=50, line_dash="dash", line_color="#22c55e", annotation_text="50% Edge Baseline", annotation_position="top left")
-    fig_ft.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
-    fig_ft.update_yaxes(range=[0, 100], gridcolor='#f1f5f9', title="Follow-Through %")
+    ), secondary_y=True)
+
+    fig_ft.add_hline(y=50, line_dash="dash", line_color="#22c55e", annotation_text="50% Edge Baseline", annotation_position="top left", secondary_y=True)
+    
+    fig_ft.update_layout(
+        barmode='stack', height=320, margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", 
+        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified"
+    )
+    fig_ft.update_yaxes(title_text="Total Breakout Volume", gridcolor='#f1f5f9', secondary_y=False)
+    fig_ft.update_yaxes(title_text="Win Rate %", range=[0, 105], showgrid=False, secondary_y=True)
     fig_ft.update_xaxes(showgrid=False)
     st.plotly_chart(fig_ft, use_container_width=True)
 
@@ -551,6 +595,10 @@ st.markdown("<br><hr>", unsafe_allow_html=True)
 bot_col, _ = st.columns([1.5, 4])
 with bot_col:
     st.markdown(f"<div style='text-align: center; font-size: 11px; color: #94a3b8; margin-bottom: 5px;'>Last Successful Database Update: {last_sync_display}</div>", unsafe_allow_html=True)
-    if st.button("📅 Run End of Day Analytics", use_container_width=True):
-        if trigger_github_action("eod_update.yml", "EOD Sync"):
-            st.success("GitHub bot activated! Please wait 2 mins, then click Refresh above.")
+    if not st.session_state.sync_in_progress:
+        if st.button("📅 Run End of Day Analytics", use_container_width=True):
+            if trigger_github_action("eod_update.yml", "EOD Sync"):
+                st.session_state.sync_in_progress = True
+                st.session_state.sync_start_time = time.time()
+                st.session_state.pre_sync_time = last_sync_display
+                st.rerun()
