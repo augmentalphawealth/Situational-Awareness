@@ -66,10 +66,11 @@ df['20D_High'] = df['Close'] > df['Max_20D_Prior']
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
 df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 1.5)
 
-prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).fillna(False).astype(bool)
+# PANDAS WARNING FIX: Use math casting instead of fillna(False)
+prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).astype(float).fillna(0.0).astype(bool)
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
 
-df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).fillna(False).astype(bool)
+df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).astype(float).fillna(0.0).astype(bool)
 df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
 df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3d_ago'])
 
@@ -107,10 +108,12 @@ overall_breadth = df.groupby('Date').agg(
 overall_breadth['Pct_Above_20_EMA'] = (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20'].replace(0, np.nan)) * 100
 overall_breadth['Pct_Above_50_EMA'] = (overall_breadth['Above_50_EMA'] / overall_breadth['Valid_50'].replace(0, np.nan)) * 100
 overall_breadth['Pct_Above_200_EMA'] = (overall_breadth['Above_200_EMA'] / overall_breadth['Valid_200'].replace(0, np.nan)) * 100
+
 overall_breadth['Rolling_3D_Up_4'] = overall_breadth['Up_4_Count'].rolling(window=3).sum()
 overall_breadth['Rolling_3D_Down_4'] = overall_breadth['Down_4_Count'].rolling(window=3).sum()
 overall_breadth['Net_52W_High_Low'] = overall_breadth['New_52W_Highs'] - overall_breadth['New_52W_Lows']
 overall_breadth['Volume_Ratio'] = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan)
+
 overall_breadth['AD_Spread'] = overall_breadth['Advances'] - overall_breadth['Declines']
 overall_breadth['MCO'] = overall_breadth['AD_Spread'].ewm(span=19, adjust=False).mean() - overall_breadth['AD_Spread'].ewm(span=39, adjust=False).mean()
 overall_breadth['TRIN'] = (overall_breadth['Advances'] / overall_breadth['Declines'].replace(0, np.nan)) / (overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan))
@@ -120,41 +123,33 @@ final_summary = overall_breadth.merge(large_breadth, on='Date', how='left').merg
 # FULL 7-PART COMPOSITE SCORE CALCULATION
 df_score = final_summary.copy()
 
-# C1: Breadth (Up to 25 pts)
 p_blend = (0.65 * df_score['Pct_Above_20_EMA']) + (0.35 * df_score['Pct_Above_50_EMA'])
 c1_breadth = (p_blend / 100) * 25
 
-# C2: Breakout Success (25 pts or 0)
 ft_rate = np.where(df_score['T3_Breakouts'] > 0, (df_score['T3_Wins'] / df_score['T3_Breakouts']) * 100, 0)
 c2_breakout = np.where(ft_rate > 50, 25, 0)
 
-# C3: Momentum Thrust (Up to 20 pts)
 net_4d = df_score['Rolling_3D_Up_4'] - df_score['Rolling_3D_Down_4']
 net_1m = df_score['Up_25_1M_Count'] - df_score['Down_25_1M_Count']
 rank_4d = net_4d.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_1m = net_1m.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 c3_momentum = (rank_4d * 10) + (rank_1m * 10)
 
-# C4: Volume & 52W H/L (Up to 20 pts)
 rank_vol = df_score['Volume_Ratio'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_hl = df_score['Net_52W_High_Low'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 c4_vol_hl = np.where(df_score['Volume_Ratio'] > 1.0, rank_vol * 10, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 10, 0)
 
-# C5: Long-Term Structure (10 pts)
 p200 = df_score['Pct_Above_200_EMA']
 p200_slope = p200.diff(20) 
 c5_lt = np.where((p200 > 50) & (p200_slope > 0), 10, np.where((p200 <= 50) & (p200_slope < 0), 0, 5))
 
-# C6: Narrowness Penalty (0 to -15 pts)
 hunting_ground = (df_score['Small_Pct_50_EMA'] + df_score['Micro_Pct_50_EMA']) / 2
 gap = df_score['Large_Pct_50_EMA'] - hunting_ground
 c6_penalty = np.where(gap >= 25, np.maximum(-15, (gap - 25) * -0.5), 0)
 
-# C7: Washout Recovery Bonus (+15 pts)
 min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20).min()
 c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
 
-# Final Integration
 raw_score = c1_breadth + c2_breakout + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + c5_lt + c6_penalty + c7_bonus
 final_summary['Composite_Score'] = raw_score.clip(lower=0, upper=100).round().astype(int)
 
