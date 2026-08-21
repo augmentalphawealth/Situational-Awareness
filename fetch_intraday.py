@@ -57,7 +57,7 @@ kite_symbols = [f"NSE:{sym}" for sym in unique_symbols]
 chunks = [kite_symbols[i:i + 200] for i in range(0, len(kite_symbols), 200)]
 ist_offset = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 now_ist = datetime.datetime.now(ist_offset)
-today_dt = pd.to_datetime(now_ist.strftime("%Y-%m-%d"))
+today_dt = pd.to_datetime(now_ist.strftime("%Y-%m-%d")).normalize()
 
 new_rows = []
 for chunk in chunks:
@@ -73,10 +73,10 @@ for chunk in chunks:
                     })
                 break
         except Exception: time.sleep(1)
-    time.sleep(0.4) 
+    time.sleep(1.1)  # Strictly respect 1 req/sec Quote API limit
 
 df_live = pd.DataFrame(new_rows)
-df_live['Date'] = pd.to_datetime(df_live['Date'])
+df_live['Date'] = pd.to_datetime(df_live['Date']).dt.normalize()
 df_hist = df_hist[df_hist['Date'] != today_dt]
 df = pd.concat([df_hist, df_live], ignore_index=True).sort_values(['Symbol', 'Date']).reset_index(drop=True)
 
