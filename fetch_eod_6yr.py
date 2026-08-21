@@ -52,6 +52,19 @@ except Exception as e:
     print("❌ Error logging in:", e)
     sys.exit(1)
 
+today_dt = pd.to_datetime(datetime.datetime.now().strftime("%Y-%m-%d")).normalize()
+
+# HOLIDAY GUARD
+try:
+    test_quote = kite.quote(["NSE:RELIANCE"])
+    if "NSE:RELIANCE" in test_quote:
+        last_time = test_quote["NSE:RELIANCE"].get("last_trade_time")
+        if last_time and last_time.date() != today_dt.date():
+            print(f"🛑 MARKET HOLIDAY GUARD: Last trade recorded on {last_time.date()}. Aborting sync to prevent duplicate data.")
+            sys.exit(0)
+except Exception as e:
+    print("⚠️ Holiday guard check failed, proceeding with caution.", e)
+
 parquet_file = "nse_6yr_historical.parquet"
 tmp_parquet = "nse_6yr_historical.tmp.parquet"
 if not os.path.exists(parquet_file): sys.exit(1)
@@ -62,7 +75,6 @@ unique_symbols = df_hist['Symbol'].unique()
 
 kite_symbols = [f"NSE:{sym}" for sym in unique_symbols]
 chunks = [kite_symbols[i:i + 200] for i in range(0, len(kite_symbols), 200)]
-today_dt = pd.to_datetime(datetime.datetime.now().strftime("%Y-%m-%d")).normalize()
 
 new_rows = []
 for chunk in chunks:
