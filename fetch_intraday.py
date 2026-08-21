@@ -53,37 +53,8 @@ except Exception as e:
     print("❌ Error logging in:", e)
     sys.exit(1)
 
-ist_offset = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-now_ist = datetime.datetime.now(ist_offset)
-today_dt = pd.to_datetime(now_ist.strftime("%Y-%m-%d")).normalize()
-
-# HOLIDAY GUARD
-try:
-    test_quote = kite.quote(["NSE:RELIANCE"])
-    if "NSE:RELIANCE" in test_quote:
-        last_time = test_quote["NSE:RELIANCE"].get("last_trade_time")
-        if last_time and last_time.date() != today_dt.date():
-            print(f"🛑 MARKET HOLIDAY GUARD: Last trade recorded on {last_time.date()}. Aborting sync to prevent duplicate data.")
-            sys.exit(0)
-except Exception as e:
-    print("⚠️ Holiday guard check failed, proceeding with caution.", e)
-
 cache_file = "trailing_cache.parquet"
-
-# DYNAMIC CACHE REBUILDER
-if not os.path.exists(cache_file):
-    print(f"⚠️ {cache_file} not found. Attempting to build it from the master database...")
-    master_file = "nse_6yr_historical.parquet"
-    if os.path.exists(master_file):
-        df_master = pd.read_parquet(master_file)
-        df_master['Date'] = pd.to_datetime(df_master['Date'])
-        cutoff_date = df_master['Date'].max() - pd.Timedelta(days=450)
-        df_cache = df_master[df_master['Date'] >= cutoff_date]
-        df_cache.to_parquet(cache_file, index=False)
-        print("✅ Cache built successfully.")
-    else:
-        print(f"❌ Master database '{master_file}' is also missing. Cannot proceed.")
-        sys.exit(1)
+if not os.path.exists(cache_file): sys.exit(1)
 
 df_hist = pd.read_parquet(cache_file)
 df_hist['Date'] = pd.to_datetime(df_hist['Date'])
@@ -91,6 +62,9 @@ unique_symbols = df_hist['Symbol'].unique()
 
 kite_symbols = [f"NSE:{sym}" for sym in unique_symbols]
 chunks = [kite_symbols[i:i + 200] for i in range(0, len(kite_symbols), 200)]
+ist_offset = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+now_ist = datetime.datetime.now(ist_offset)
+today_dt = pd.to_datetime(now_ist.strftime("%Y-%m-%d")).normalize()
 
 new_rows = []
 for chunk in chunks:
@@ -145,7 +119,6 @@ df['Down_25_1M'] = df['Pct_1M'] <= -25.0
 df['New_52W_High'] = (df['Close'] >= df['Rolling_52W_High']) & traded_today
 df['New_52W_Low'] = (df['Close'] <= df['Rolling_52W_Low']) & traded_today
 
-# Intraday Breakout (0.5x Volume Rule)
 df['Prev_Close'] = df.groupby('Symbol')['Close'].shift(1)
 df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Prev_Close']), abs(df['Low'] - df['Prev_Close'])))
 df['ATR_14'] = df.groupby('Symbol')['TR'].transform(lambda x: x.ewm(alpha=1/14, min_periods=14, adjust=False).mean())
@@ -154,12 +127,10 @@ df['Max_20D_Prior'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1
 
 df['20D_High'] = df['Close'] > df['Max_20D_Prior']
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
-df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 0.5)
+df['Volume_Surge'] = df['Volume'] > df['Vol_20D_Avg'] 
 
-# PANDAS WARNING FIX: Use math casting instead of fillna(False)
 prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).astype(float).fillna(0.0).astype(bool)
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
-
 df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).astype(float).fillna(0.0).astype(bool)
 df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
 df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3d_ago'])
@@ -195,7 +166,6 @@ overall_breadth = df.groupby('Date').agg(
     T3_Breakouts=('Is_Breakout_3d_ago', 'sum'), T3_Wins=('Follow_Through_Win', 'sum')
 ).reset_index()
 
-# MISSING EMA BREADTH CALCULATIONS RESTORED
 overall_breadth['Pct_Above_20_EMA'] = (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20'].replace(0, np.nan)) * 100
 overall_breadth['Pct_Above_50_EMA'] = (overall_breadth['Above_50_EMA'] / overall_breadth['Valid_50'].replace(0, np.nan)) * 100
 overall_breadth['Pct_Above_200_EMA'] = (overall_breadth['Above_200_EMA'] / overall_breadth['Valid_200'].replace(0, np.nan)) * 100
@@ -223,11 +193,11 @@ net_4d = df_score['Rolling_3D_Up_4'] - df_score['Rolling_3D_Down_4']
 net_1m = df_score['Up_25_1M_Count'] - df_score['Down_25_1M_Count']
 rank_4d = net_4d.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_1m = net_1m.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
-c3_momentum = (rank_4d * 10) + (rank_1m * 10)
+c3_momentum = pd.Series((rank_4d * 10) + (rank_1m * 10)).fillna(0)
 
 rank_vol = df_score['Volume_Ratio'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_hl = df_score['Net_52W_High_Low'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
-c4_vol_hl = np.where(df_score['Volume_Ratio'] > 1.0, rank_vol * 10, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 10, 0)
+c4_vol_hl = pd.Series(np.where(df_score['Volume_Ratio'] > 1.0, rank_vol * 10, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 10, 0)).fillna(0)
 
 p200 = df_score['Pct_Above_200_EMA']
 p200_slope = p200.diff(20) 
@@ -240,12 +210,12 @@ c6_penalty = np.where(gap >= 25, np.maximum(-15, (gap - 25) * -0.5), 0)
 min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20).min()
 c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
 
-raw_score = c1_breadth + c2_breakout + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + c5_lt + c6_penalty + c7_bonus
+raw_score = pd.Series(c1_breadth) + pd.Series(c2_breakout) + c3_momentum + c4_vol_hl + pd.Series(c5_lt) + pd.Series(c6_penalty) + pd.Series(c7_bonus)
 final_summary['Composite_Score'] = raw_score.clip(lower=0, upper=100).round().astype(int)
 
 final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
-
 final_summary.to_csv("historical_breadth_regime_6yr.csv", index=False)
+
 intra_df = pd.DataFrame([{"Time": now_ist.strftime("%H:%M"), "Advances": final_summary.iloc[-1]['Advances'], "Declines": final_summary.iloc[-1]['Declines'], "Date": now_ist.strftime("%Y-%m-%d")}])
 intra_df.to_csv("live_intraday_breadth.csv", index=False)
 
