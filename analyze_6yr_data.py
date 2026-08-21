@@ -4,7 +4,7 @@ import os
 import datetime
 
 print("=========================================================")
-print("  EOD BREADTH & REGIME ANALYSIS ENGINE (INSTITUTIONAL)")
+print("  EOD BREADTH & REGIME ANALYSIS ENGINE")
 print("=========================================================")
 
 parquet_file = "nse_6yr_historical.parquet"
@@ -12,14 +12,13 @@ if not os.path.exists(parquet_file):
     print("❌ Parquet database not found! Run fetch_6yr_history.py first.")
     exit()
 
-print("Loading raw 6-year historical database...")
 df = pd.read_parquet(parquet_file)
 df['Date'] = pd.to_datetime(df['Date'])
 df = df.sort_values(by=['Symbol', 'Date']).reset_index(drop=True)
 
-print("Calculating Institutional Moving Averages & Volatility Matrix...")
+# 1. Moving Averages & Filters
 df['Daily_Turnover'] = df['Close'] * df['Volume']
-df['Turnover_45d_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.rolling(window=45, min_periods=10).mean())
+df['Turnover_45d_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(window=45, min_periods=10).mean())
 df['Cap_Rank'] = df.groupby('Date')['Turnover_45d_Avg'].rank(ascending=False, method='min')
 
 conditions = [
@@ -40,8 +39,11 @@ traded_today = df['Volume'] > 0
 df['Gainer'] = (df['Daily_Pct'] > 0) & traded_today
 df['Loser'] = (df['Daily_Pct'] < 0) & traded_today
 
-df['Rolling_52W_High'] = df.groupby('Symbol')['High'].transform(lambda x: x.rolling(window=252, min_periods=200).max())
-df['Rolling_52W_Low'] = df.groupby('Symbol')['Low'].transform(lambda x: x.rolling(window=252, min_periods=200).min())
+df['Rolling_52W_High'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=200).max())
+df['Rolling_52W_Low'] = df.groupby('Symbol')['Low'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=200).min())
+
+# Drop initial build-up period where 200 EMA & 52W Highs are NaN
+df = df.dropna(subset=['EMA_200', 'Rolling_52W_High']).reset_index(drop=True)
 
 df['Above_20_EMA'] = df['Close'] > df['EMA_20']
 df['Above_50_EMA'] = df['Close'] > df['EMA_50']
@@ -55,28 +57,32 @@ df['Up_4_Pct'] = (df['Daily_Pct'] >= 4.0) & traded_today
 df['Down_4_Pct'] = (df['Daily_Pct'] <= -4.0) & traded_today
 df['Up_25_1M'] = df['Pct_1M'] >= 25.0
 df['Down_25_1M'] = df['Pct_1M'] <= -25.0
-df['New_52W_High'] = df['Close'] >= df['Rolling_52W_High']
-df['New_52W_Low'] = df['Close'] <= df['Rolling_52W_Low']
+df['New_52W_High'] = (df['Close'] >= df['Rolling_52W_High']) & traded_today
+df['New_52W_Low'] = (df['Close'] <= df['Rolling_52W_Low']) & traded_today
 
-print("Calculating VCP Breakout Math (Look-Forward Allocation)...")
+# 2. VCP & EOD Breakout Math (1.5x Volume)
 df['Prev_Close'] = df.groupby('Symbol')['Close'].shift(1)
 df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Prev_Close']), abs(df['Low'] - df['Prev_Close'])))
 df['ATR_14'] = df.groupby('Symbol')['TR'].transform(lambda x: x.ewm(alpha=1/14, min_periods=14, adjust=False).mean())
-df['Vol_20D_Avg'] = df.groupby('Symbol')['Volume'].transform(lambda x: x.shift(1).rolling(20, min_periods=5).mean())
+df['Vol_20D_Avg'] = df.groupby('Symbol')['Volume'].transform(lambda x: x.shift(1).rolling(20, min_periods=20).mean())
 df['Max_20D_Prior'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(20, min_periods=20).max())
 
 df['20D_High'] = df['Close'] > df['Max_20D_Prior']
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
 df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 1.5)
 
-df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & df.groupby('Symbol')['VCP_Tightness'].shift(1)
-df['Future_Close_3d'] = df.groupby('Symbol')['Close'].shift(-3)
-df['Follow_Through_Win'] = (df['Is_Breakout'] == True) & (df['Future_Close_3d'] > df['Close'])
+prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).fillna(False).astype(bool)
+df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
+
+# T+3 Backward-Looking Cohort
+df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).fillna(False).astype(bool)
+df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
+df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3d_ago'])
 
 df['Up_Volume'] = np.where(df['Gainer'], df['Daily_Turnover'], 0)
 df['Down_Volume'] = np.where(df['Loser'], df['Daily_Turnover'], 0)
 
-print("Aggregating Final Market Breadth Matrix...")
+# 3. Breadth Aggregation
 def get_liq_breadth(data, liq_name, prefix):
     liq_df = data[data['Liquidity_Category'] == liq_name]
     aggregated = liq_df.groupby('Date').agg(
@@ -102,7 +108,7 @@ overall_breadth = df.groupby('Date').agg(
     Up_25_1M_Count=('Up_25_1M', 'sum'), Down_25_1M_Count=('Down_25_1M', 'sum'),
     New_52W_Highs=('New_52W_High', 'sum'), New_52W_Lows=('New_52W_Low', 'sum'),
     Total_Up_Volume=('Up_Volume', 'sum'), Total_Down_Volume=('Down_Volume', 'sum'),
-    T3_Breakouts=('Is_Breakout', 'sum'), T3_Wins=('Follow_Through_Win', 'sum')
+    T3_Breakouts=('Is_Breakout_3d_ago', 'sum'), T3_Wins=('Follow_Through_Win', 'sum')
 ).reset_index()
 
 overall_breadth['Pct_Above_20_EMA'] = (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20'].replace(0, np.nan)) * 100
@@ -112,22 +118,48 @@ overall_breadth['Pct_Above_200_EMA'] = (overall_breadth['Above_200_EMA'] / overa
 overall_breadth['Rolling_3D_Up_4'] = overall_breadth['Up_4_Count'].rolling(window=3).sum()
 overall_breadth['Rolling_3D_Down_4'] = overall_breadth['Down_4_Count'].rolling(window=3).sum()
 overall_breadth['Net_52W_High_Low'] = overall_breadth['New_52W_Highs'] - overall_breadth['New_52W_Lows']
-overall_breadth['Volume_Ratio'] = (overall_breadth['Total_Up_Volume'] / (overall_breadth['Total_Down_Volume'] + 1)).clip(upper=15.0)
+overall_breadth['Volume_Ratio'] = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan)
 
-print("Injecting Tactical Exertion Metrics (MCO & TRIN)...")
+# 4. TRIN & MCO (Guarded Division)
 overall_breadth['AD_Spread'] = overall_breadth['Advances'] - overall_breadth['Declines']
 overall_breadth['MCO'] = overall_breadth['AD_Spread'].ewm(span=19, adjust=False).mean() - overall_breadth['AD_Spread'].ewm(span=39, adjust=False).mean()
 
-adv_dec_ratio = overall_breadth['Advances'] / overall_breadth['Declines'].replace(0, 1)
-vol_ratio = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, 1)
-overall_breadth['TRIN'] = adv_dec_ratio / vol_ratio
+overall_breadth['Advances'] = overall_breadth['Advances'].replace(0, 1) # Floor for TRIN numerator
+adv_dec = overall_breadth['Advances'] / overall_breadth['Declines'].replace(0, np.nan)
+up_dn_vol = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan)
+overall_breadth['TRIN'] = adv_dec / up_dn_vol
 
 final_summary = overall_breadth.merge(large_breadth, on='Date', how='left')
 final_summary = final_summary.merge(mid_breadth, on='Date', how='left')
 final_summary = final_summary.merge(small_breadth, on='Date', how='left')
 final_summary = final_summary.merge(micro_breadth, on='Date', how='left')
-final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
 
+# 5. Pre-calculate Composite Score
+def get_score(row, history):
+    p_fast = row.get('Pct_Above_20_EMA', 0)
+    p_slow = row.get('Pct_Above_50_EMA', 0)
+    p_blend = (0.65 * p_fast) + (0.35 * p_slow) if pd.notna(p_fast) and pd.notna(p_slow) else 0
+    
+    t3_breaks = row.get('T3_Breakouts', 0)
+    ft_rate = (row.get('T3_Wins', 0) / t3_breaks * 100) if pd.notna(t3_breaks) and t3_breaks > 0 else 0
+    vol_ratio = row.get('Volume_Ratio', 0) if pd.notna(row.get('Volume_Ratio')) else 0
+    
+    b1 = 25 if p_blend > 50 else 0
+    b2 = 25 if ft_rate > 50 else 0
+    b3 = 25 if row.get('Net_52W_High_Low', 0) > 0 else 0
+    b4 = 25 if vol_ratio > 1.0 else 0
+    return int(round(max(0, min(100, b1 + b2 + b3 + b4))))
+
+scores = []
+for i in range(len(final_summary)):
+    hist_slice = final_summary.iloc[:i+1]
+    scores.append(get_score(final_summary.iloc[i], hist_slice))
+final_summary['Composite_Score'] = scores
+
+final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
 output_csv = "historical_breadth_regime_6yr.csv"
 final_summary.to_csv(output_csv, index=False)
-print(f"✅ Institutional Analytics Complete. Exported {len(final_summary)} trading days to {output_csv}.")
+
+# Keep trailing 300 days for Intraday script caching
+df.tail(300 * len(df['Symbol'].unique())).to_parquet("trailing_cache.parquet", index=False)
+print("✅ Output Generated Successfully.")
