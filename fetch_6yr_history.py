@@ -19,24 +19,34 @@ try:
     totp_token = pyotp.TOTP(totp_secret).now()
     twofa_res = session.post("https://kite.zerodha.com/api/twofa", data={"user_id": user_id, "request_id": login_res["data"]["request_id"], "twofa_value": totp_token}).json()
     
-    def get_token(url): return parse_qs(urlparse(url).query).get("request_token", [None])[0]
-    res = session.get(f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}", allow_redirects=True)
-    if "connect/authorize" in res.url:
-        form_data = {"action": "accept", "api_key": api_key}
-        for tag in re.findall(r'<input[^>]*>', res.text, re.IGNORECASE):
-            name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
-            if name_match: form_data[name_match.group(1)] = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE).group(1) if re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE) else ""
-        if "sess_id" in parse_qs(urlparse(res.url).query): form_data["sess_id"] = parse_qs(urlparse(res.url).query)["sess_id"][0]
-        res = session.post("https://kite.zerodha.com/connect/authorize", data=form_data, allow_redirects=True)
-    
-    request_token = next((get_token(r.url) for r in res.history + [res] if get_token(r.url)), None)
+    request_token = None
+    try:
+        login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
+        res = session.get(login_url, allow_redirects=True)
+        if "connect/authorize" in res.url:
+            form_data = {"action": "accept", "api_key": api_key}
+            for tag in re.findall(r'<input[^>]*>', res.text, re.IGNORECASE):
+                name_match = re.search(r'name=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+                if name_match: form_data[name_match.group(1)] = re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE).group(1) if re.search(r'value=["\']([^"\']*)["\']', tag, re.IGNORECASE) else ""
+            if "sess_id" in parse_qs(urlparse(res.url).query): form_data["sess_id"] = parse_qs(urlparse(res.url).query)["sess_id"][0]
+            res = session.post("https://kite.zerodha.com/connect/authorize", data=form_data, allow_redirects=True)
+    except Exception as e:
+        match = re.search(r'request_token=([a-zA-Z0-9]+)', str(e))
+        if match: request_token = match.group(1)
+
+    if not request_token:
+        request_token = parse_qs(urlparse(res.url).query).get("request_token", [None])[0] if 'res' in locals() else None
+
+    if not request_token:
+        print("❌ Failed to extract Request Token.")
+        sys.exit(1)
+        
     data = kite.generate_session(request_token, api_secret=api_secret)
     kite.set_access_token(data["access_token"])
 except Exception as e: sys.exit(1)
 
 instruments = kite.instruments("NSE")
 df_scripts = pd.DataFrame(instruments)
-# Strict Universe Filter: EQ only, Exclude BE/BZ
 nse_stocks = df_scripts[(df_scripts['instrument_type'] == 'EQ') & (~df_scripts['tradingsymbol'].str.endswith(('-BE', '-BZ', '-SM', '-ST')))]
 tokens_to_fetch = nse_stocks[['tradingsymbol', 'instrument_token']].to_dict('records')
 
@@ -52,7 +62,7 @@ for stock in tokens_to_fetch:
                 if res: stock_data.extend(res)
                 break
             except Exception: time.sleep(1)
-        time.sleep(0.35)
+        time.sleep(0.5)
     
     if stock_data:
         df_temp = pd.DataFrame(stock_data).rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
