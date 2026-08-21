@@ -98,26 +98,10 @@ df['EMA_20'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, 
 df['EMA_50'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=50).mean())
 df['EMA_200'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=200).mean())
 df['Daily_Pct'] = df.groupby('Symbol')['Close'].pct_change() * 100
-df['Pct_1M'] = df.groupby('Symbol')['Close'].pct_change(periods=21) * 100
 
 traded_today = df['Volume'] > 0
 df['Gainer'] = (df['Daily_Pct'] > 0) & traded_today
 df['Loser'] = (df['Daily_Pct'] < 0) & traded_today
-df['Rolling_52W_High'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=200).max())
-df['Rolling_52W_Low'] = df.groupby('Symbol')['Low'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=200).min())
-
-df['Above_20_EMA'] = df['Close'] > df['EMA_20']
-df['Above_50_EMA'] = df['Close'] > df['EMA_50']
-df['Above_200_EMA'] = df['Close'] > df['EMA_200']
-df['Valid_20_EMA'] = df['EMA_20'].notna()
-df['Valid_50_EMA'] = df['EMA_50'].notna()
-df['Valid_200_EMA'] = df['EMA_200'].notna()
-df['Up_4_Pct'] = (df['Daily_Pct'] >= 4.0) & traded_today
-df['Down_4_Pct'] = (df['Daily_Pct'] <= -4.0) & traded_today
-df['Up_25_1M'] = df['Pct_1M'] >= 25.0
-df['Down_25_1M'] = df['Pct_1M'] <= -25.0
-df['New_52W_High'] = (df['Close'] >= df['Rolling_52W_High']) & traded_today
-df['New_52W_Low'] = (df['Close'] <= df['Rolling_52W_Low']) & traded_today
 
 df['Prev_Close'] = df.groupby('Symbol')['Close'].shift(1)
 df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Prev_Close']), abs(df['Low'] - df['Prev_Close'])))
@@ -127,27 +111,23 @@ df['Max_20D_Prior'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1
 df['20D_High'] = df['Close'] > df['Max_20D_Prior']
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
 
-# Intraday Volume Projection
 market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
 elapsed_minutes = max(1, min(375, int((now_ist - market_open).total_seconds() / 60)))
-df['Projected_Volume'] = np.where(df['Date'] == today_dt, df['Volume'] * (375 / elapsed_minutes), df['Volume'])
+# Guard against massive early morning volume spikes
+if elapsed_minutes < 45:
+    df['Projected_Volume'] = 0
+else:
+    df['Projected_Volume'] = np.where(df['Date'] == today_dt, df['Volume'] * (375 / elapsed_minutes), df['Volume'])
+
 df['Volume_Surge'] = df['Projected_Volume'] > (df['Vol_20D_Avg'] * 1.5)
 
 prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).astype(float).fillna(0.0).astype(bool)
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
 
-df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).astype(float).fillna(0.0).astype(bool)
-df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
-df['Follow_Through_Win'] = df['Is_Breakout_3d_ago'] & (df['Close'] > df['Close_3d_ago'])
-
-df['Up_Volume'] = np.where(df['Gainer'], df['Daily_Turnover'], 0)
-df['Down_Volume'] = np.where(df['Loser'], df['Daily_Turnover'], 0)
-
 overall_breadth = df.groupby('Date').agg(
     Total_Universe=('Symbol', 'count'), Advances=('Gainer', 'sum'), Declines=('Loser', 'sum')
 ).reset_index()
 
-# ONLY update the live intraday breadth file. Do NOT touch the 6-year history.
 intra_df = pd.DataFrame([{"Time": now_ist.strftime("%H:%M"), "Advances": overall_breadth.iloc[-1]['Advances'], "Declines": overall_breadth.iloc[-1]['Declines'], "Date": now_ist.strftime("%Y-%m-%d")}])
 intra_df.to_csv("live_intraday_breadth.csv", index=False)
 
