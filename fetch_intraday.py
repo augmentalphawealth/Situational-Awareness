@@ -24,20 +24,19 @@ ist_offset = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 now_ist = datetime.datetime.now(ist_offset)
 today_dt = pd.to_datetime(now_ist.strftime("%Y-%m-%d")).normalize()
 
-# HOLIDAY GUARD
+# HOLIDAY GUARD: NSE:NIFTY 50
 try:
-    test_quote = kite.quote(["NSE:RELIANCE"])
-    if "NSE:RELIANCE" in test_quote:
-        last_time = test_quote["NSE:RELIANCE"].get("last_trade_time")
+    test_quote = kite.quote(["NSE:NIFTY 50"])
+    if "NSE:NIFTY 50" in test_quote:
+        last_time = test_quote["NSE:NIFTY 50"].get("last_trade_time")
         if last_time and last_time.date() != today_dt.date():
-            print(f"🛑 MARKET HOLIDAY GUARD: Last trade on {last_time.date()}. Aborting sync.")
+            print(f"🛑 MARKET HOLIDAY GUARD: NIFTY 50 last trade on {last_time.date()}. Aborting sync.")
             sys.exit(0)
 except Exception as e:
     print("⚠️ Holiday guard check failed, proceeding with caution.", e)
 
 cache_file = "trailing_cache.parquet"
 
-# DYNAMIC CACHE REBUILDER
 if not os.path.exists(cache_file):
     print(f"⚠️ {cache_file} not found. Attempting to build it from the master database...")
     master_file = "nse_6yr_historical.parquet"
@@ -61,7 +60,7 @@ chunks = [kite_symbols[i:i + 200] for i in range(0, len(kite_symbols), 200)]
 
 new_rows = []
 for chunk in chunks:
-    for attempt in range(3): 
+    for attempt in range(5): 
         try:
             res = kite.quote(chunk)
             if res:
@@ -72,7 +71,11 @@ for chunk in chunks:
                         "Low": data['ohlc']['low'], "Close": data['last_price'], "Volume": data['volume'] 
                     })
                 break
-        except Exception: time.sleep(1)
+        except Exception as e:
+            if "429" in str(e) or "403" in str(e):
+                time.sleep(2 ** attempt)
+            else:
+                time.sleep(1)
     time.sleep(1.1)  
 
 if not new_rows:
@@ -121,10 +124,14 @@ df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Pr
 df['ATR_14'] = df.groupby('Symbol')['TR'].transform(lambda x: x.ewm(alpha=1/14, min_periods=14, adjust=False).mean())
 df['Vol_20D_Avg'] = df.groupby('Symbol')['Volume'].transform(lambda x: x.shift(1).rolling(20, min_periods=20).mean())
 df['Max_20D_Prior'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(20, min_periods=20).max())
-
 df['20D_High'] = df['Close'] > df['Max_20D_Prior']
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
-df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 0.5)
+
+# Intraday Volume Projection for accurate 1.5x alignment
+market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+elapsed_minutes = max(1, min(375, int((now_ist - market_open).total_seconds() / 60)))
+df['Projected_Volume'] = np.where(df['Date'] == today_dt, df['Volume'] * (375 / elapsed_minutes), df['Volume'])
+df['Volume_Surge'] = df['Projected_Volume'] > (df['Vol_20D_Avg'] * 1.5)
 
 prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).astype(float).fillna(0.0).astype(bool)
 df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
@@ -142,9 +149,9 @@ def get_liq_breadth(data, liq_name, prefix):
         Valid_20=('Valid_20_EMA', 'sum'), Valid_50=('Valid_50_EMA', 'sum'), Valid_200=('Valid_200_EMA', 'sum'),
         Above_20=('Above_20_EMA', 'sum'), Above_50=('Above_50_EMA', 'sum'), Above_200=('Above_200_EMA', 'sum')
     ).reset_index()
-    aggregated[f'{prefix}_Pct_20_EMA'] = (aggregated['Above_20'] / aggregated['Valid_20'].replace(0, np.nan)) * 100
-    aggregated[f'{prefix}_Pct_50_EMA'] = (aggregated['Above_50'] / aggregated['Valid_50'].replace(0, np.nan)) * 100
-    aggregated[f'{prefix}_Pct_200_EMA'] = (aggregated['Above_200'] / aggregated['Valid_200'].replace(0, np.nan)) * 100
+    aggregated[f'{prefix}_Pct_20_EMA'] = (aggregated['Above_20'] / aggregated['Valid_20'].replace(0, 1)) * 100
+    aggregated[f'{prefix}_Pct_50_EMA'] = (aggregated['Above_50'] / aggregated['Valid_50'].replace(0, 1)) * 100
+    aggregated[f'{prefix}_Pct_200_EMA'] = (aggregated['Above_200'] / aggregated['Valid_200'].replace(0, 1)) * 100
     return aggregated[['Date', f'{prefix}_Pct_20_EMA', f'{prefix}_Pct_50_EMA', f'{prefix}_Pct_200_EMA']]
 
 large_breadth = get_liq_breadth(df, 'Top 100 Liq', 'Large')
@@ -164,30 +171,30 @@ overall_breadth = df.groupby('Date').agg(
     T3_Breakouts=('Is_Breakout_3d_ago', 'sum'), T3_Wins=('Follow_Through_Win', 'sum')
 ).reset_index()
 
-overall_breadth['Pct_Above_20_EMA'] = (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20'].replace(0, np.nan)) * 100
-overall_breadth['Pct_Above_50_EMA'] = (overall_breadth['Above_50_EMA'] / overall_breadth['Valid_50'].replace(0, np.nan)) * 100
-overall_breadth['Pct_Above_200_EMA'] = (overall_breadth['Above_200_EMA'] / overall_breadth['Valid_200'].replace(0, np.nan)) * 100
+overall_breadth['Pct_Above_20_EMA'] = (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20'].replace(0, 1)) * 100
+overall_breadth['Pct_Above_50_EMA'] = (overall_breadth['Above_50_EMA'] / overall_breadth['Valid_50'].replace(0, 1)) * 100
+overall_breadth['Pct_Above_200_EMA'] = (overall_breadth['Above_200_EMA'] / overall_breadth['Valid_200'].replace(0, 1)) * 100
 
 overall_breadth['Rolling_3D_Up_4'] = overall_breadth['Up_4_Count'].rolling(window=3).sum()
 overall_breadth['Rolling_3D_Down_4'] = overall_breadth['Down_4_Count'].rolling(window=3).sum()
 overall_breadth['Net_52W_High_Low'] = overall_breadth['New_52W_Highs'] - overall_breadth['New_52W_Lows']
-overall_breadth['Volume_Ratio'] = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan)
+
+# Zero Division Handling Fallback
+overall_breadth['Total_Down_Volume'] = overall_breadth['Total_Down_Volume'].replace(0, 1)
+overall_breadth['Volume_Ratio'] = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume']
+overall_breadth['Declines'] = overall_breadth['Declines'].replace(0, 1)
 
 overall_breadth['AD_Spread'] = overall_breadth['Advances'] - overall_breadth['Declines']
 overall_breadth['MCO'] = overall_breadth['AD_Spread'].ewm(span=19, adjust=False).mean() - overall_breadth['AD_Spread'].ewm(span=39, adjust=False).mean()
-overall_breadth['TRIN'] = (overall_breadth['Advances'] / overall_breadth['Declines'].replace(0, np.nan)) / (overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'].replace(0, np.nan))
+overall_breadth['TRIN'] = (overall_breadth['Advances'] / overall_breadth['Declines']) / (overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'])
 
 final_summary = overall_breadth.merge(large_breadth, on='Date', how='left').merge(mid_breadth, on='Date', how='left').merge(small_breadth, on='Date', how='left').merge(micro_breadth, on='Date', how='left')
 
-# FULL 7-PART COMPOSITE SCORE CALCULATION
 df_score = final_summary.copy()
-
 p_blend = (0.65 * df_score['Pct_Above_20_EMA']) + (0.35 * df_score['Pct_Above_50_EMA'])
 c1_breadth = (p_blend / 100) * 25
-
-ft_rate = np.where(df_score['T3_Breakouts'] > 0, (df_score['T3_Wins'] / df_score['T3_Breakouts']) * 100, 0)
+ft_rate = np.where(df_score['T3_Breakouts'] > 0, (df_score['T3_Wins'] / df_score['T3_Breakouts'].replace(0, 1)) * 100, 0)
 c2_breakout = np.where(ft_rate > 50, 25, 0)
-
 net_4d = df_score['Rolling_3D_Up_4'] - df_score['Rolling_3D_Down_4']
 net_1m = df_score['Up_25_1M_Count'] - df_score['Down_25_1M_Count']
 rank_4d = net_4d.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
@@ -204,12 +211,12 @@ c5_lt = np.where((p200 > 50) & (p200_slope > 0), 10, np.where((p200 <= 50) & (p2
 
 hunting_ground = (df_score['Small_Pct_50_EMA'] + df_score['Micro_Pct_50_EMA']) / 2
 gap = df_score['Large_Pct_50_EMA'] - hunting_ground
-c6_penalty = np.where(gap >= 25, np.maximum(-15, (gap - 25) * -0.5), 0)
+# Smooth Penalty Math Implementation
+c6_penalty = -np.clip((gap - 20) * 0.75, 0, 15)
 
 min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20).min()
 c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
 
-# FIXED LINE: Safely wrap and fill all components before integer cast
 raw_score = pd.Series(c1_breadth).fillna(0) + pd.Series(c2_breakout).fillna(0) + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + pd.Series(c5_lt).fillna(0) + pd.Series(c6_penalty).fillna(0) + pd.Series(c7_bonus).fillna(0)
 final_summary['Composite_Score'] = raw_score.fillna(0).clip(lower=0, upper=100).round().astype(int)
 
