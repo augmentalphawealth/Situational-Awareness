@@ -67,7 +67,9 @@ except Exception as e:
 
 parquet_file = "nse_6yr_historical.parquet"
 tmp_parquet = "nse_6yr_historical.tmp.parquet"
-if not os.path.exists(parquet_file): sys.exit(1)
+if not os.path.exists(parquet_file):
+    print(f"❌ Error: Master database '{parquet_file}' not found.")
+    sys.exit(1)
 
 df_hist = pd.read_parquet(parquet_file)
 df_hist['Date'] = pd.to_datetime(df_hist['Date']).dt.normalize()
