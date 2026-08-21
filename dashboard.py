@@ -25,6 +25,7 @@ st.markdown("""
     .action-banner { background-color: #0f172a; color: #f8fafc; padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; text-align: center; margin-top: 8px; }
     .stButton>button { border-radius: 6px; font-weight: 600; font-size: 12px; padding: 0.3rem 0.5rem; }
     div[data-testid="stDateInput"] input { padding: 0.3rem; font-size: 13px; text-align: center; }
+    div[data-testid="stDateInput"] label { font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: -5px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -130,9 +131,6 @@ def load_agg_data():
             return df.sort_values('Date').reset_index(drop=True)
     return pd.DataFrame()
 
-# ==========================================
-# FIX 1: OOM CRASH PREVENTION (Global Cache)
-# ==========================================
 @st.cache_data(max_entries=1, show_spinner=False)
 def load_master_parquet():
     if os.path.exists("nse_6yr_historical.parquet"):
@@ -178,8 +176,10 @@ with head_col2:
     nav1, nav2, nav3 = st.columns([1, 1.4, 1])
     with nav1: st.button("◀ Prev", on_click=step_prev_day, use_container_width=True)
     with nav2:
-        selected = st.date_input("Date", value=st.session_state.analysis_date, min_value=min_date, max_value=max_date, label_visibility="collapsed", format="DD/MM/YYYY")
-        st.session_state.analysis_date = pd.to_datetime(selected)
+        selected_date = st.date_input("📅 Historical Date", value=st.session_state.analysis_date, min_value=min_date, max_value=max_date, format="DD/MM/YYYY")
+        if selected_date != st.session_state.analysis_date.date():
+            st.session_state.analysis_date = pd.to_datetime(selected_date)
+            st.rerun()
     with nav3: st.button("Next ▶", on_click=step_next_day, use_container_width=True)
 with head_col3:
     display_sync = last_sync_display if st.session_state.analysis_date == max_date else "Historical View"
@@ -240,8 +240,7 @@ else:
     tacs = {"asset": "CASH", "sizing": "0% (Pure Cash)", "risk": "Sit on hands", "profit": "Build watchlists; wait for a bounce"}
 
 df_10d = df_filtered.tail(10).copy()
-# FIX 2: Day Month formatting for charts
-df_10d['Date_Str'] = df_10d['Date'].apply(lambda x: f"{x.day} {x.strftime('%B')[:3]}")
+df_10d['Date_Str'] = df_10d['Date'].dt.strftime('%d %b')
 
 def get_bar_color(val):
     if val >= 71: return "#22c55e"
@@ -279,7 +278,6 @@ with st.container(border=True):
     
     st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
 
-# FIX 2: Full spelled out date display natively rendering "21 August 2026"
 actual_date_str = f"{latest['Date'].day} {latest['Date'].strftime('%B %Y')}"
 if is_live_active and st.session_state.analysis_date == max_date:
     actual_date_str = f"{actual_date_str} <span style='color:#eab308; font-weight:800;'>(⚡ LIVE INTRADAY A/D SNAPSHOT)</span>"
@@ -476,7 +474,7 @@ with tac_col2:
         fig_trin.update_xaxes(showgrid=False)
         st.plotly_chart(fig_trin, use_container_width=True)
 
-# SECTION 4: BREAKOUT SUCCESS DUAL-AXIS STACKED CHART
+# SECTION 4: BREAKOUT SUCCESS (CLEAN SINGLE-AXIS BAR CHART)
 with st.container(border=True):
     t3_wins = plot_df.get('T3_Wins', pd.Series([0])).fillna(0)
     t3_breaks = plot_df.get('T3_Breakouts', pd.Series([0])).fillna(0)
@@ -484,41 +482,30 @@ with st.container(border=True):
     
     win_rate = np.where(t3_breaks > 0, (t3_wins / t3_breaks) * 100, 0)
     plot_df['Win_Rate_Plot'] = win_rate
+    plot_df['T3_Wins'] = t3_wins
+    plot_df['T3_Fails'] = t3_fails
+    plot_df['T3_Total'] = t3_breaks
     
     latest_wr = plot_df['Win_Rate_Plot'].iloc[-1] if not pd.isna(plot_df['Win_Rate_Plot'].iloc[-1]) else 0
     wr_color = '#16a34a' if latest_wr > 50 else '#dc2626'
     
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>VCP BREAKOUT FOLLOW-THROUGH (T+3 WIN RATE) &nbsp;|&nbsp; LATEST: <span style='color:{wr_color};'>{latest_wr:.1f}%</span> (3-Day Cohort)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Bar Height = Total Breakouts 3 days ago. Green = Closed higher today (Win). Red = Failed. Line = Win Rate %. >50% is a healthy edge.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate. >50% is a healthy edge. Hover over bars to see the exact breakout volume.</div>", unsafe_allow_html=True)
     
-    fig_ft = make_subplots(specs=[[{"secondary_y": True}]])
+    colors_wr = ['#22c55e' if val >= 50 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
     
-    fig_ft.add_trace(go.Bar(
-        x=plot_df['Date'], y=t3_wins, name='Successful Breakouts',
-        marker_color='#22c55e', hovertemplate='Wins: %{y}<extra></extra>'
-    ), secondary_y=False)
+    fig_ft = go.Figure(go.Bar(
+        x=plot_df['Date'], 
+        y=plot_df['Win_Rate_Plot'], 
+        marker_color=colors_wr, 
+        customdata=np.stack((plot_df['T3_Total'], plot_df['T3_Wins'], plot_df['T3_Fails']), axis=-1),
+        hovertemplate='<b>Win Rate: %{y:.1f}%</b><br>Total Breakouts: %{customdata[0]}<br>Wins: %{customdata[1]}<br>Fails: %{customdata[2]}<extra></extra>'
+    ))
     
-    fig_ft.add_trace(go.Bar(
-        x=plot_df['Date'], y=t3_fails, name='Failed Breakouts',
-        marker_color='#ef4444', hovertemplate='Fails: %{y}<extra></extra>'
-    ), secondary_y=False)
+    fig_ft.add_hline(y=50, line_dash="dash", line_color="#22c55e", annotation_text="50% Edge Baseline", annotation_position="top left")
     
-    fig_ft.add_trace(go.Scatter(
-        x=plot_df['Date'], y=plot_df['Win_Rate_Plot'], name='Win Rate %',
-        mode='lines+markers', line=dict(color='#8b5cf6', width=2), marker=dict(size=4),
-        hovertemplate='Win Rate: %{y:.1f}%<extra></extra>'
-    ), secondary_y=True)
-
-    fig_ft.add_hline(y=50, line_dash="dash", line_color="#22c55e", annotation_text="50% Edge Baseline", annotation_position="top left", secondary_y=True)
-    
-    fig_ft.update_layout(
-        barmode='stack', height=320, margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", 
-        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="x unified"
-    )
-    fig_ft.update_yaxes(title_text="Total Breakout Volume", gridcolor='#f1f5f9', secondary_y=False)
-    fig_ft.update_yaxes(title_text="Win Rate %", range=[0, 105], showgrid=False, secondary_y=True)
+    fig_ft.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
+    fig_ft.update_yaxes(range=[0, 100], gridcolor='#f1f5f9', title="Win Rate %")
     fig_ft.update_xaxes(showgrid=False)
     st.plotly_chart(fig_ft, use_container_width=True)
 
