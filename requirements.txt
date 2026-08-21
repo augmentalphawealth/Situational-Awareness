@@ -8,3 +8,5 @@ pyotp
 pyarrow
 fastparquet
 logzero
+PyNaCl
+playwright
