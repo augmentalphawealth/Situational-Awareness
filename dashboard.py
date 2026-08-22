@@ -8,7 +8,6 @@ import os
 import datetime
 from io import StringIO, BytesIO
 from zoneinfo import ZoneInfo
-from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Situational Awareness Engine", layout="wide", initial_sidebar_state="collapsed")
 
@@ -16,10 +15,7 @@ st.markdown("""
     <style>
     .main { background-color: #f8fafc; }
     .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 98%; }
-    
-    /* Target only the top Streamlit bar so calendar header controls remain visible */
     [data-testid="stHeader"] { display: none; }
-    
     div[data-testid="stVerticalBlockBorderWrapper"] { background-color: #ffffff; border-radius: 12px; padding: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.03); border: 1px solid #e2e8f0; }
     .card-title { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 2px; }
     .chart-desc { font-size: 11px; color: #94a3b8; font-style: italic; margin-bottom: 10px; line-height: 1.2; }
@@ -149,16 +145,14 @@ def load_master_parquet():
             df = pd.read_parquet("nse_6yr_historical.parquet")
             df['Date'] = pd.to_datetime(df['Date'])
             return df
-        except Exception:
-            pass
+        except Exception: pass
     try:
         parquet_bytes = read_remote_file("nse_6yr_historical.parquet")
         if parquet_bytes:
             df = pd.read_parquet(BytesIO(parquet_bytes.encode('latin1')))
             df['Date'] = pd.to_datetime(df['Date'])
             return df
-    except Exception:
-        pass
+    except Exception: pass
     return pd.DataFrame()
 
 df_agg = load_agg_data()
@@ -286,9 +280,7 @@ with st.container(border=True):
         fig_m1 = go.Figure(go.Bar(
             x=df_10d['Date_Str'], y=df_10d['Composite_Score'], 
             marker_color=[get_bar_color(v) for v in df_10d['Composite_Score']],
-            text=df_10d['Composite_Score'], 
-            textposition='outside', 
-            textangle=0,            
+            text=df_10d['Composite_Score'], textposition='outside', textangle=0,            
             hovertemplate='Score: <b>%{y}</b><extra></extra>'
         ))
         fig_m1.update_layout(height=120, margin=dict(l=10, r=10, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
@@ -342,7 +334,7 @@ with hero_col1:
             <div style='text-align: center; margin-top: -10px; padding-bottom: 8px;'>
                 <span style='color: #16a34a; font-size: 15px; font-weight: 800;'>{advances} ADVANCES</span> &nbsp;&nbsp;
                 <span style='color: #dc2626; font-size: 15px; font-weight: 800;'>{declines} DECLINES</span>
-                <p style='color: {adv_change_color}; font-size: 12px; font-weight: 700; margin-top: 4px; margin-bottom: 0px;'>{adv_change_str} vs Yesterday EOD (Univ {total_univ})</p>
+                <p style='color: {adv_change_color}; font-size: 12px; font-weight: 700; margin-top: 4px; margin-bottom: 0px;'>{adv_change_str} vs Yesterday EOD (VIP Univ {total_univ})</p>
             </div>
         """, unsafe_allow_html=True)
 
@@ -364,30 +356,36 @@ with hero_col2:
         regime_html = f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px;'>• Follow-Through Win Rate: <b>{ft_rate:.1f}%</b></div>"
         regime_html += f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px;'>• 200 EMA Breadth: <b>{latest.get('Pct_Above_200_EMA', 0):.1f}%</b></div>"
         
-        latest_mco = latest.get('MCO', 0)
-        latest_trin = latest.get('TRIN', 1.0)
+        latest_mco = latest.get('MCO', np.nan)
+        latest_trin = latest.get('TRIN', np.nan)
         
-        if not pd.isna(latest_mco) and (latest_mco >= 50 or latest_mco <= -50):
-            mco_alert = "Extremely Overbought (Exhaustion Risk)" if latest_mco >= 50 else "Extremely Oversold (Washout)"
-            mco_col = "#dc2626" if latest_mco >= 50 else "#16a34a"
+        if not pd.isna(latest_mco):
+            mco_alert = "Extremely Overbought (Exhaustion Risk)" if latest_mco >= 50 else "Extremely Oversold (Washout)" if latest_mco <= -50 else "Neutral Momentum"
+            mco_col = "#dc2626" if latest_mco >= 50 else "#16a34a" if latest_mco <= -50 else "#334155"
             regime_html += f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px;'>• MCO Exertion: <b style='color:{mco_col};'>{latest_mco:.1f} — {mco_alert}</b></div>"
             
-        if not pd.isna(latest_trin) and (latest_trin >= 2.0 or latest_trin <= 0.5):
-            trin_alert = "Panic Selling" if latest_trin >= 2.0 else "Aggressive Demand"
-            trin_col = "#dc2626" if latest_trin >= 2.0 else "#16a34a"
+        if not pd.isna(latest_trin):
+            trin_alert = "Panic Selling" if latest_trin >= 2.0 else "Aggressive Demand" if latest_trin <= 0.5 else "Balanced Trade"
+            trin_col = "#dc2626" if latest_trin >= 2.0 else "#16a34a" if latest_trin <= 0.5 else "#334155"
             regime_html += f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px;'>• TRIN Reading: <b style='color:{trin_col};'>{latest_trin:.2f} — {trin_alert}</b></div>"
+        else:
+            regime_html += f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px; color:#94a3b8;'>• TRIN Reading: <b>N/A (Zero Declines)</b></div>"
             
         st.markdown(regime_html, unsafe_allow_html=True)
 
 m2, m3 = st.columns(2)
 with m2:
-    vol_ratio = latest['Volume_Ratio'] if pd.notna(latest['Volume_Ratio']) else 0
-    v_col = "#22c55e" if vol_ratio > 1.0 else "#ef4444"
+    vol_ratio = latest.get('Volume_Ratio', np.nan)
+    if pd.isna(vol_ratio):
+        v_col, v_str = "#94a3b8", "N/A"
+    else:
+        v_col, v_str = ("#22c55e" if vol_ratio > 1.0 else "#ef4444"), f"{vol_ratio:.2f}"
+        
     with st.container(border=True):
         st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 5px;'>Volume Breadth Ratio</div>", unsafe_allow_html=True)
         st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Ratio of volume in advancing vs. declining stocks. >1.0 indicates institutional accumulation.</div>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: center;'><div class='metric-value' style='color: {v_col};'>{vol_ratio:.2f}</div></div>", unsafe_allow_html=True)
-        fig_m2 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d['Volume_Ratio'], marker_color=['#22c55e' if v >= 1.0 else '#ef4444' for v in df_10d['Volume_Ratio']], hovertemplate='Ratio: %{y:.2f}<extra></extra>'))
+        st.markdown(f"<div style='text-align: center;'><div class='metric-value' style='color: {v_col};'>{v_str}</div></div>", unsafe_allow_html=True)
+        fig_m2 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d.get('Volume_Ratio', pd.Series(dtype=float)).fillna(0), marker_color=['#22c55e' if v >= 1.0 else '#ef4444' for v in df_10d.get('Volume_Ratio', pd.Series([0]))], hovertemplate='Ratio: %{y:.2f}<extra></extra>'))
         fig_m2.add_hline(y=1.0, line_dash="dash", line_color="#cbd5e1")
         fig_m2.update_layout(height=100, margin=dict(l=5, r=5, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
         fig_m2.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
@@ -396,10 +394,11 @@ with m2:
 
 with m3:
     net_hl = safe_int(latest.get('Net_52W_High_Low', 0))
+    ipo_hl = safe_int(latest.get('IPO_New_Highs', 0))
     h_col = "#22c55e" if net_hl > 0 else "#ef4444"
     with st.container(border=True):
-        st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 5px;'>Net 52-Week Highs vs Lows</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Long-term trend strength. Consistent positive values confirm structural bull markets.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 5px;'>Net 52-Week Highs (Mature)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='chart-desc' style='margin-left: 10px;'>Long-term strength. (Plus <b style='color:#3b82f6;'>{ipo_hl}</b> new IPOs hitting all-time highs).</div>", unsafe_allow_html=True)
         st.markdown(f"<div style='text-align: center;'><div class='metric-value' style='color: {h_col};'>{net_hl}</div></div>", unsafe_allow_html=True)
         fig_m3 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d['Net_52W_High_Low'], marker_color=['#22c55e' if v >= 0 else '#ef4444' for v in df_10d['Net_52W_High_Low']], hovertemplate='Net HL: %{y:.0f}<extra></extra>'))
         fig_m3.add_hline(y=0, line_dash="solid", line_color="#cbd5e1")
@@ -421,7 +420,7 @@ plot_df['Chart_Date_Str'] = plot_df['Date'].apply(lambda x: f"{x.day} {x.strftim
 # SECTION 1: UNIVERSE EMA BREADTH
 with st.container(border=True):
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>UNIVERSE EMA BREADTH TRENDS &nbsp;|&nbsp; LATEST: <span style='color:#22c55e;'>200 EMA ({plot_df['Pct_Above_200_EMA'].iloc[-1]:.1f}%)</span> • <span style='color:#a855f7;'>50 EMA ({plot_df['Pct_Above_50_EMA'].iloc[-1]:.1f}%)</span> • <span style='color:#3b82f6;'>20 EMA ({plot_df['Pct_Above_20_EMA'].iloc[-1]:.1f}%)</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Percentage of stocks above key moving averages. Watch for >50% cross as trend confirmation.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Percentage of mature active stocks above key moving averages. Watch for >50% cross as trend confirmation.</div>", unsafe_allow_html=True)
     
     fig_ema = go.Figure()
     fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Pct_Above_200_EMA'], mode='lines', name='% > 200 EMA', line=dict(color='#22c55e', width=2)))
@@ -477,12 +476,14 @@ with tac_col1:
 
 with tac_col2:
     with st.container(border=True):
-        latest_trin_chart = plot_df['TRIN'].iloc[-1] if 'TRIN' in plot_df.columns and not plot_df['TRIN'].isna().all() else 1.0
-        trin_color = '#16a34a' if latest_trin_chart < 1.0 else '#dc2626'
-        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>TRIN (ARMS INDEX) &nbsp;|&nbsp; LATEST: <span style='color:{trin_color};'>{latest_trin_chart:.2f}</span></div>", unsafe_allow_html=True)
+        latest_trin_chart = plot_df['TRIN'].iloc[-1] if 'TRIN' in plot_df.columns and not plot_df['TRIN'].isna().all() else np.nan
+        trin_color = "#94a3b8" if pd.isna(latest_trin_chart) else ('#16a34a' if latest_trin_chart < 1.0 else '#dc2626')
+        trin_str = "N/A" if pd.isna(latest_trin_chart) else f"{latest_trin_chart:.2f}"
+        
+        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>TRIN (ARMS INDEX) &nbsp;|&nbsp; LATEST: <span style='color:{trin_color};'>{trin_str}</span></div>", unsafe_allow_html=True)
         st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Contrarian indicator balancing A/D and Volume. <0.5 shows aggressive buying, >2.0 shows panic selling.</div>", unsafe_allow_html=True)
         
-        colors_trin = ['#22c55e' if val < 1.0 else '#ef4444' for val in plot_df.get('TRIN', pd.Series([1.0]))]
+        colors_trin = ['#22c55e' if (pd.notna(val) and val < 1.0) else '#ef4444' for val in plot_df.get('TRIN', pd.Series([1.0]))]
         fig_trin = go.Figure(go.Bar(x=plot_df['Date'], y=plot_df.get('TRIN', pd.Series(dtype=float)), marker_color=colors_trin, hovertemplate='TRIN: %{y:.2f}<extra></extra>'))
         fig_trin.add_hline(y=1.0, line_dash="dash", line_color="#cbd5e1", annotation_text="Neutral (1.0)")
         fig_trin.add_hline(y=0.5, line_dash="dot", line_color="#22c55e", annotation_text="Demand (<0.5)")
@@ -494,7 +495,7 @@ with tac_col2:
         fig_trin.update_xaxes(showgrid=False)
         st.plotly_chart(fig_trin, use_container_width=True)
 
-# SECTION 4: BREAKOUT SUCCESS (CLEAN SINGLE-AXIS BAR CHART)
+# SECTION 4: BREAKOUT SUCCESS
 with st.container(border=True):
     t3_wins = plot_df.get('T3_Wins', pd.Series([0])).fillna(0)
     t3_breaks = plot_df.get('T3_Breakouts', pd.Series([0])).fillna(0)
@@ -507,12 +508,12 @@ with st.container(border=True):
     plot_df['T3_Total'] = t3_breaks
     
     latest_wr = plot_df['Win_Rate_Plot'].iloc[-1] if not pd.isna(plot_df['Win_Rate_Plot'].iloc[-1]) else 0
-    wr_color = '#16a34a' if latest_wr > 50 else '#dc2626'
+    wr_color = '#16a34a' if latest_wr >= 40 else '#dc2626'
     
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>VCP BREAKOUT FOLLOW-THROUGH (T+3 WIN RATE) &nbsp;|&nbsp; LATEST: <span style='color:{wr_color};'>{latest_wr:.1f}%</span> (3-Day Cohort)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >50% confirms a healthy environment for momentum trading. Hover over bars to see total breakout volume.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >40% establishes a tradable momentum environment.</div>", unsafe_allow_html=True)
     
-    colors_wr = ['#22c55e' if val >= 50 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
+    colors_wr = ['#22c55e' if val >= 40 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
     
     fig_ft = go.Figure(go.Bar(
         x=plot_df['Date'], 
@@ -522,7 +523,7 @@ with st.container(border=True):
         hovertemplate='<b>Win Rate: %{y:.1f}%</b><br>Total Breakouts: %{customdata[0]}<br>Wins: %{customdata[1]}<br>Fails: %{customdata[2]}<extra></extra>'
     ))
     
-    fig_ft.add_hline(y=50, line_dash="dash", line_color="#22c55e", annotation_text="50% Edge Baseline", annotation_position="top left")
+    fig_ft.add_hline(y=40, line_dash="dash", line_color="#22c55e", annotation_text="40% Edge Baseline", annotation_position="top left")
     
     fig_ft.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
     fig_ft.update_yaxes(range=[0, 100], gridcolor='#f1f5f9', title="Win Rate %")
@@ -575,39 +576,44 @@ st.markdown(f"<p style='color: #64748b; font-size: 13px;'>Filter the underlying 
 def get_drilldown_data(target_date):
     try:
         raw_df = load_master_parquet()
-        if raw_df.empty:
-            return pd.DataFrame()
+        if raw_df.empty: return pd.DataFrame()
         
         target_date_normalized = pd.Timestamp(target_date).normalize()
         start_date = target_date_normalized - pd.Timedelta(days=300)
         subset = raw_df[(raw_df['Date'] >= start_date) & (raw_df['Date'] <= target_date_normalized)].copy()
         
-        if subset.empty:
-            return pd.DataFrame()
-        
+        if subset.empty: return pd.DataFrame()
         subset = subset.sort_values(['Symbol', 'Date'])
         
         try:
-            subset['EMA_20'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=20).mean())
-            subset['EMA_50'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=50).mean())
-            subset['EMA_200'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=200).mean())
+            subset['History_Days'] = subset.groupby('Symbol').cumcount() + 1
+            subset['Prior_History_Days'] = subset['History_Days'] - 1
+            subset['Daily_Turnover'] = subset['Close'] * subset['Volume']
+            subset['Prior_Turnover_20D_Avg'] = subset.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(20, min_periods=1).mean())
+            
+            mature_valid = (subset['Prior_History_Days'] >= 20) & (subset['Prior_Turnover_20D_Avg'] >= 50_000_000)
+            new_valid = (subset['Prior_History_Days'] >= 1) & (subset['Prior_History_Days'] < 20)
+            subset['Active_Universe'] = (mature_valid | new_valid) & (subset['Volume'] > 0)
+            
+            subset['EMA_20'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=1).mean())
+            subset['EMA_50'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=1).mean())
+            subset['EMA_200'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=1).mean())
             
             subset['Daily_%_Change'] = subset.groupby('Symbol')['Close'].pct_change() * 100
             subset['1M_%_Change'] = subset.groupby('Symbol')['Close'].pct_change(periods=21) * 100
-            subset['52W_High'] = subset.groupby('Symbol')['High'].transform(lambda x: x.rolling(window=252, min_periods=200).max())
-            subset['52W_Low'] = subset.groupby('Symbol')['Low'].transform(lambda x: x.rolling(window=252, min_periods=200).min())
+            subset['52W_High'] = subset.groupby('Symbol')['High'].transform(lambda x: x.rolling(window=252, min_periods=1).max())
+            subset['52W_Low'] = subset.groupby('Symbol')['Low'].transform(lambda x: x.rolling(window=252, min_periods=1).min())
+            subset['Prior_ATH'] = subset.groupby('Symbol')['High'].transform(lambda x: x.shift(1).cummax())
         except Exception as e:
             st.error(f"Error calculating technical indicators: {str(e)}")
             return pd.DataFrame()
         
         subset_dates = subset['Date'].dt.normalize()
         closest_date = subset_dates[subset_dates <= target_date_normalized].max()
-        
-        if pd.isna(closest_date):
-            return pd.DataFrame()
+        if pd.isna(closest_date): return pd.DataFrame()
         
         day_data = subset[subset['Date'].dt.normalize() == closest_date].copy()
-        day_data['Traded_Today'] = day_data['Volume'] > 0
+        day_data = day_data[day_data['Active_Universe']].copy()
         day_data['Daily_%_Change'] = day_data['Daily_%_Change'].round(2)
         day_data['1M_%_Change'] = day_data['1M_%_Change'].round(2)
         
@@ -619,8 +625,8 @@ def get_drilldown_data(target_date):
 drill_col, _ = st.columns([1.5, 1])
 with drill_col:
     param_choices = st.multiselect("Select Parameters to Filter (Combines with AND):", [
-        "Advances (Stocks in Green)", "Declines (Stocks in Red)", "Stocks > 20 EMA", "Stocks > 50 EMA", "Stocks > 200 EMA",
-        "Up 4% or more Today", "Down 4% or more Today", "1-Month 25% Winners", "1-Month 25% Losers", "New 52-Week Highs", "New 52-Week Lows"
+        "Advances (Stocks in Green)", "Declines (Stocks in Red)", "Stocks > 20 EMA (Mature Only)", "Stocks > 50 EMA (Mature Only)", "Stocks > 200 EMA (Mature Only)",
+        "Up 4% or more Today", "Down 4% or more Today", "1-Month 25% Winners", "1-Month 25% Losers", "New 52-Week Highs (Mature > 1Yr)", "New IPO/Listing Highs (< 1Yr)"
     ])
 
 with st.spinner("🔍 Loading historical stock data..."):
@@ -630,23 +636,23 @@ if not drill_data.empty:
     res = drill_data.copy()
     if param_choices:
         for param in param_choices:
-            if param == "Advances (Stocks in Green)": res = res[(res['Daily_%_Change'] > 0) & res['Traded_Today']]
-            elif param == "Declines (Stocks in Red)": res = res[(res['Daily_%_Change'] < 0) & res['Traded_Today']]
-            elif param == "Stocks > 20 EMA": res = res[res['Close'] > res['EMA_20']]
-            elif param == "Stocks > 50 EMA": res = res[res['Close'] > res['EMA_50']]
-            elif param == "Stocks > 200 EMA": res = res[res['Close'] > res['EMA_200']]
-            elif param == "Up 4% or more Today": res = res[(res['Daily_%_Change'] >= 4.0) & res['Traded_Today']]
-            elif param == "Down 4% or more Today": res = res[(res['Daily_%_Change'] <= -4.0) & res['Traded_Today']]
+            if param == "Advances (Stocks in Green)": res = res[res['Daily_%_Change'] > 0]
+            elif param == "Declines (Stocks in Red)": res = res[res['Daily_%_Change'] < 0]
+            elif param == "Stocks > 20 EMA (Mature Only)": res = res[(res['Close'] > res['EMA_20']) & (res['Prior_History_Days'] >= 20)]
+            elif param == "Stocks > 50 EMA (Mature Only)": res = res[(res['Close'] > res['EMA_50']) & (res['Prior_History_Days'] >= 50)]
+            elif param == "Stocks > 200 EMA (Mature Only)": res = res[(res['Close'] > res['EMA_200']) & (res['Prior_History_Days'] >= 200)]
+            elif param == "Up 4% or more Today": res = res[res['Daily_%_Change'] >= 4.0]
+            elif param == "Down 4% or more Today": res = res[res['Daily_%_Change'] <= -4.0]
             elif param == "1-Month 25% Winners": res = res[res['1M_%_Change'] >= 25.0]
             elif param == "1-Month 25% Losers": res = res[res['1M_%_Change'] <= -25.0]
-            elif param == "New 52-Week Highs": res = res[(res['Close'] >= res['52W_High']) & res['Traded_Today']]
-            elif param == "New 52-Week Lows": res = res[(res['Close'] <= res['52W_Low']) & res['Traded_Today']]
+            elif param == "New 52-Week Highs (Mature > 1Yr)": res = res[(res['Close'] >= res['52W_High']) & (res['Prior_History_Days'] >= 252)]
+            elif param == "New IPO/Listing Highs (< 1Yr)": res = res[(res['Close'] >= res['Prior_ATH']) & (res['Prior_History_Days'] >= 1) & (res['Prior_History_Days'] < 252)]
 
         res = res[['Symbol', 'Close', 'Daily_%_Change', '1M_%_Change']].sort_values('Daily_%_Change', ascending=False)
-        st.write(f"**Found {len(res)} matching stocks** for {selected_date_display}:")
+        st.write(f"**Found {len(res)} matching VIP active stocks** for {selected_date_display}:")
         st.dataframe(res, use_container_width=True, height=350)
     else:
-        st.info("👆 Select one or more parameters above to filter the stock list.")
+        st.info("👆 Select one or more parameters above to filter the VIP stock list.")
 else:
     st.info("💡 Deep dive list requires 'nse_6yr_historical.parquet' in repository.")
 
