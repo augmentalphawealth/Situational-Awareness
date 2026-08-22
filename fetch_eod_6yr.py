@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from kiteconnect import KiteConnect
 
+
 IST = ZoneInfo("Asia/Kolkata")
 EOD_TIME = datetime.time(17, 0)
 QUOTE_CHUNK_SIZE = 200
@@ -60,7 +61,7 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def parse_lock(path):
+def read_lock(path):
     values = {}
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -75,7 +76,7 @@ def parse_lock(path):
 
 def acquire_lock(path):
     if path.exists():
-        info = parse_lock(path)
+        info = read_lock(path)
         pid_text = info.get("pid")
         host = info.get("host")
         if not pid_text:
@@ -97,6 +98,7 @@ def acquire_lock(path):
             die(f"Could not verify lock owner PID {pid}: {exc}")
         else:
             die(f"Another EOD process is active: PID {pid}.")
+
     try:
         fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -112,7 +114,7 @@ def acquire_lock(path):
 
 def release_lock(path):
     try:
-        info = parse_lock(path)
+        info = read_lock(path)
         if (
             info.get("pid") == str(os.getpid())
             and info.get("host") == socket.gethostname()
@@ -139,7 +141,7 @@ def fetch_retry(fetcher, label, failures):
     return None
 
 
-def is_valid_ohlcv(row):
+def is_valid_new_ohlcv(row):
     try:
         return (
             float(row["Open"]) > 0
@@ -152,20 +154,49 @@ def is_valid_ohlcv(row):
         return False
 
 
-def normalize_history(candles, symbol):
+def validate_existing_structure(df):
+    missing = set(REQUIRED_COLUMNS) - set(df.columns)
+    if missing:
+        die(f"Existing database missing columns: {sorted(missing)}")
+    if df["Date"].isna().any():
+        die("Existing database contains invalid dates.")
+    if df.duplicated(["Symbol", "Date"]).any():
+        die("Existing database contains duplicate Symbol/Date keys.")
+
+
+def validate_new_data(df, name):
+    missing = set(REQUIRED_COLUMNS) - set(df.columns)
+    if missing:
+        die(f"{name} missing columns: {sorted(missing)}")
+    if df["Date"].isna().any():
+        die(f"{name} contains invalid dates.")
+    if df.duplicated(["Symbol", "Date"]).any():
+        die(f"{name} contains duplicate Symbol/Date keys.")
+    valid = df.apply(is_valid_new_ohlcv, axis=1)
+    if not valid.all():
+        die(f"{name} contains invalid newly fetched OHLCV rows.")
+
+
+def candles_to_df(candles, symbol):
     if not candles:
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
     df = pd.DataFrame(candles).rename(columns={
-        "date": "Date", "open": "Open", "high": "High",
-        "low": "Low", "close": "Close", "volume": "Volume",
+        "date": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
     })
     history_columns = ["Date", "Open", "High", "Low", "Close", "Volume"]
     if set(history_columns) - set(df.columns):
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
     df["Date"] = df["Date"].apply(normalize_date)
     df["Symbol"] = symbol
-    return df[REQUIRED_COLUMNS].drop_duplicates(
-        ["Symbol", "Date"], keep="last"
+    return (
+        df[REQUIRED_COLUMNS]
+        .sort_values(["Symbol", "Date"])
+        .drop_duplicates(["Symbol", "Date"], keep="last")
     )
 
 
@@ -198,11 +229,10 @@ def rotate_backups():
 
 
 def run_analyzer():
-    result = subprocess.run(
+    return subprocess.run(
         [sys.executable, "analyze_6yr_data.py"],
         check=False,
-    )
-    return result.returncode
+    ).returncode
 
 
 def main():
@@ -223,22 +253,15 @@ def main():
         if not PARQUET_FILE.exists():
             die(f"Master database not found: {PARQUET_FILE}")
 
-        original_hash = sha256_file(PARQUET_FILE)
-        if original_hash is None:
+        source_hash = sha256_file(PARQUET_FILE)
+        if source_hash is None:
             die("Could not hash source parquet.")
         df_hist = pd.read_parquet(PARQUET_FILE)
-        if sha256_file(PARQUET_FILE) != original_hash:
+        if sha256_file(PARQUET_FILE) != source_hash:
             die("Source parquet changed while being loaded.")
 
-        missing_columns = set(REQUIRED_COLUMNS) - set(df_hist.columns)
-        if missing_columns:
-            die(f"Existing database missing columns: {sorted(missing_columns)}")
+        validate_existing_structure(df_hist)
         df_hist["Date"] = df_hist["Date"].apply(normalize_date)
-        if df_hist["Date"].isna().any():
-            die("Existing database contains invalid dates.")
-        if df_hist.duplicated(["Symbol", "Date"]).any():
-            die("Existing database contains duplicate Symbol/Date keys.")
-
         db_dates = set(df_hist["Date"])
         db_max_date = df_hist["Date"].max()
         expected_symbols = set(df_hist["Symbol"].astype(str))
@@ -256,31 +279,23 @@ def main():
         if not nifty_data:
             die("Could not retrieve NIFTY 50 quote.")
 
-        latest_market_date = normalize_date(nifty_data.get("last_trade_time"))
-        if not valid_date(latest_market_date):
-            die("NIFTY last_trade_time is missing or invalid.")
-        if latest_market_date > today:
-            die("NIFTY reports a future trade date. Aborting.")
-        if fetch_today and latest_market_date < today:
-            die(
-                f"Today's EOD session is not confirmed. "
-                f"Latest NIFTY trade: {latest_market_date.date()}."
-            )
-
+        last_trade_date = normalize_date(nifty_data.get("last_trade_time"))
         nifty_token = nifty_data.get("instrument_token")
         if not nifty_token:
             die("NIFTY instrument token is missing.")
 
+        # If last_trade_time is absent on a weekend/holiday, historical NIFTY data
+        # supplies the last completed trading date. This is also a safety fallback.
         calendar_failures = []
         calendar_start = db_max_date - datetime.timedelta(days=CALENDAR_LOOKBACK_DAYS)
         calendar = fetch_retry(
             lambda: kite.historical_data(
                 nifty_token,
                 calendar_start.strftime("%Y-%m-%d"),
-                latest_market_date.strftime("%Y-%m-%d"),
+                today.strftime("%Y-%m-%d"),
                 "day",
             ),
-            "NIFTY calendar",
+            "NIFTY trading calendar",
             calendar_failures,
         )
         if not calendar or calendar_failures:
@@ -291,8 +306,20 @@ def main():
             for candle in calendar
             if valid_date(normalize_date(candle.get("date")))
         })
-        if not market_dates or market_dates[-1] != latest_market_date:
-            die("NIFTY history does not confirm the latest trading date.")
+        if not market_dates:
+            die("NIFTY historical calendar returned no valid dates.")
+
+        latest_calendar_date = market_dates[-1]
+        if valid_date(last_trade_date) and last_trade_date > latest_calendar_date:
+            latest_market_date = last_trade_date
+        else:
+            latest_market_date = latest_calendar_date
+
+        if fetch_today and latest_market_date < today:
+            die(
+                f"Today's EOD session is not confirmed. "
+                f"Latest completed market date: {latest_market_date.date()}."
+            )
 
         required_dates = [
             date for date in market_dates
@@ -337,31 +364,37 @@ def main():
                     f"backfill {symbol}",
                     backfill_failures,
                 )
-                temp = normalize_history(candles, symbol)
+                temp = candles_to_df(candles, symbol)
                 temp = temp[temp["Date"].isin(missing_dates)]
-                temp = temp[temp.apply(is_valid_ohlcv, axis=1)]
+                if temp.empty:
+                    backfill_failures.append({
+                        "Symbol": symbol,
+                        "Reason": "empty_backfill_response",
+                    })
+                    continue
+                temp = temp[temp.apply(is_valid_new_ohlcv, axis=1)]
+                backfill_rows.extend(temp.to_dict("records"))
                 returned_dates = set(temp["Date"])
-                for date in set(missing_dates) - returned_dates:
+                for date in sorted(set(missing_dates) - returned_dates):
                     backfill_failures.append({
                         "Symbol": symbol,
                         "Date": date,
                         "Reason": "missing_backfill_candle",
                     })
-                backfill_rows.extend(temp.to_dict("records"))
                 time.sleep(HISTORY_SLEEP_SECONDS)
 
         backfill_df = pd.DataFrame(backfill_rows, columns=REQUIRED_COLUMNS)
-        expected_pairs = {
+        actual_pairs = (
+            set(zip(backfill_df["Symbol"], backfill_df["Date"]))
+            if not backfill_df.empty else set()
+        )
+        required_pairs = {
             (symbol, date)
             for symbol in expected_symbols
             for date in missing_dates
             if not (fetch_today and date == latest_market_date)
         }
-        actual_pairs = (
-            set(zip(backfill_df["Symbol"], backfill_df["Date"]))
-            if not backfill_df.empty else set()
-        )
-        missing_pairs = expected_pairs - actual_pairs
+        missing_pairs = required_pairs - actual_pairs
         if backfill_failures or missing_pairs:
             records = backfill_failures + [
                 {"Symbol": symbol, "Date": date, "Reason": "required_pair_missing"}
@@ -412,6 +445,7 @@ def main():
                 time.sleep(QUOTE_SLEEP_SECONDS)
 
             latest_df = pd.DataFrame(latest_rows, columns=REQUIRED_COLUMNS)
+            latest_df = latest_df[latest_df.apply(is_valid_new_ohlcv, axis=1)]
             latest_df = latest_df.drop_duplicates(["Symbol", "Date"], keep="last")
             latest_symbols = set(latest_df["Symbol"])
             missing_latest = expected_symbols - latest_symbols
@@ -428,13 +462,14 @@ def main():
                     f"Latest EOD fetch incomplete: failures={len(latest_failures)}, "
                     f"missing_symbols={len(missing_latest)}. Database unchanged."
                 )
+            validate_new_data(latest_df, "Latest EOD data")
             working = working[working["Date"] != latest_market_date]
             working = pd.concat([working, latest_df], ignore_index=True)
 
-        if working["Date"].isna().any():
-            die("Combined database contains invalid dates.")
         if working.duplicated(["Symbol", "Date"]).any():
             die("Combined database contains duplicate Symbol/Date keys.")
+        if working["Date"].isna().any():
+            die("Combined database contains invalid dates.")
 
         working.to_parquet(TMP_PARQUET, index=False)
         check_df = pd.read_parquet(TMP_PARQUET)
@@ -443,7 +478,7 @@ def main():
         if check_df.duplicated(["Symbol", "Date"]).any():
             die("Temporary database contains duplicate keys.")
 
-        if sha256_file(PARQUET_FILE) != original_hash:
+        if sha256_file(PARQUET_FILE) != source_hash:
             die("Source parquet changed before backup. Aborting.")
 
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -453,22 +488,25 @@ def main():
         )
         backup_tmp = backup_path.with_suffix(backup_path.suffix + ".tmp")
         shutil.copy2(PARQUET_FILE, backup_tmp)
-        if sha256_file(backup_tmp) != original_hash:
+        if sha256_file(backup_tmp) != source_hash:
             backup_tmp.unlink(missing_ok=True)
             die("Backup hash mismatch. Original database untouched.")
         os.replace(backup_tmp, backup_path)
-        rotate_backups()
 
         os.replace(TMP_PARQUET, PARQUET_FILE)
         print(
-            f"✅ Saved successfully. mode={mode}; "
-            f"recovered_dates={len(missing_dates)}; today_fetched={fetch_today}"
+            f"Saved successfully. mode={mode}; "
+            f"recovered_dates={len(missing_dates)}; "
+            f"today_fetched={fetch_today}"
         )
 
-        exit_code = run_analyzer()
-        if exit_code != 0:
+        result = subprocess.run(
+            [sys.executable, "analyze_6yr_data.py"],
+            check=False,
+        )
+        if result.returncode != 0:
             die(
-                f"analyze_6yr_data.py failed with exit code {exit_code}. "
+                f"analyze_6yr_data.py failed with exit code {result.returncode}. "
                 f"Database updated; backup preserved at {backup_path}."
             )
 
