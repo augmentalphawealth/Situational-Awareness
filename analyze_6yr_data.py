@@ -3,7 +3,7 @@ import numpy as np
 import os
 
 print("=========================================================")
-print("  EOD BREADTH & REGIME ANALYSIS ENGINE (v2.0)            ")
+print("  EOD BREADTH & REGIME ANALYSIS ENGINE (Calibrated v2.1) ")
 print("=========================================================")
 
 parquet_file = "nse_6yr_historical.parquet"
@@ -19,19 +19,27 @@ df = df.sort_values(by=['Symbol', 'Date']).reset_index(drop=True)
 df['History_Days'] = df.groupby('Symbol').cumcount() + 1
 df['Prior_History_Days'] = df['History_Days'] - 1
 df['Daily_Turnover'] = df['Close'] * df['Volume']
-df['Prior_Turnover_20D_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(20, min_periods=1).mean())
+df['Prior_Turnover_20D_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(
+    lambda x: x.shift(1).rolling(20, min_periods=1).mean()
+)
 
-# 2. THE ACTIVE UNIVERSE GATES
+# 2. THE ACTIVE UNIVERSE GATES (50M Turnover Gate + IPO Inclusions)
 mature_valid = (df['Prior_History_Days'] >= 20) & (df['Prior_Turnover_20D_Avg'] >= 50_000_000)
 new_valid = (df['Prior_History_Days'] >= 1) & (df['Prior_History_Days'] < 20)
 df['Active_Universe'] = (mature_valid | new_valid) & (df['Volume'] > 0)
 
-df['Turnover_45d_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(window=45, min_periods=1).mean())
+df['Turnover_45d_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(
+    lambda x: x.shift(1).rolling(window=45, min_periods=1).mean()
+)
 df['Cap_Rank'] = df.groupby('Date')['Turnover_45d_Avg'].rank(ascending=False, method='min')
-conditions = [(df['Cap_Rank'] <= 100), (df['Cap_Rank'] > 100) & (df['Cap_Rank'] <= 250), (df['Cap_Rank'] > 250) & (df['Cap_Rank'] <= 500)]
+conditions = [
+    (df['Cap_Rank'] <= 100),
+    (df['Cap_Rank'] > 100) & (df['Cap_Rank'] <= 250),
+    (df['Cap_Rank'] > 250) & (df['Cap_Rank'] <= 500)
+]
 df['Liquidity_Category'] = np.select(conditions, ['Top 100 Liq', 'Mid 150 Liq', 'Lower 250 Liq'], default='Micro Liq')
 
-# 3. EMA CALCULATIONS (Run from Day 1, Gated Later)
+# 3. EMA CALCULATIONS
 df['EMA_20'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=1).mean())
 df['EMA_50'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=1).mean())
 df['EMA_200'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=1).mean())
@@ -128,7 +136,6 @@ overall_breadth['Rolling_3D_Up_4'] = overall_breadth['Up_4_Count'].rolling(windo
 overall_breadth['Rolling_3D_Down_4'] = overall_breadth['Down_4_Count'].rolling(window=3).sum()
 overall_breadth['Net_52W_High_Low'] = overall_breadth['New_52W_Highs'] - overall_breadth['New_52W_Lows']
 
-# Zero-Division Guarded Math
 adv = overall_breadth['Advances'].astype(float)
 dec = overall_breadth['Declines'].astype(float)
 uv = overall_breadth['Total_Up_Volume'].astype(float)
@@ -144,17 +151,17 @@ final_summary = overall_breadth.merge(large_breadth, on='Date', how='left').merg
 # 7. CALIBRATED SCORING ENGINE (Max 100)
 df_score = final_summary.copy()
 
-# C1: Core Breadth (20 Pts)
+# C1: Core Breadth (25 Pts)
 p_blend = (0.65 * df_score['Pct_Above_20_EMA'].fillna(0)) + (0.35 * df_score['Pct_Above_50_EMA'].fillna(0))
-c1_breadth = (p_blend / 100) * 20
+c1_breadth = (p_blend / 100) * 25
 
-# C2: Breakout Health (20 Pts) - Bayesian Smooth & 40-70% Ramp
+# C2: Breakout Health (25 Pts) - Smoothed Rate from 45% to 60%
 t3_b = df_score['T3_Breakouts'].astype(float)
 t3_w = df_score['T3_Wins'].astype(float)
 smoothed_rate = (t3_w + 5) / (t3_b + 10)
-ramp = np.clip((smoothed_rate - 0.40) / 0.30, 0, 1)
+ramp = np.clip((smoothed_rate - 0.45) / 0.15, 0, 1)
 confidence = np.clip(t3_b / 10, 0, 1)
-c2_breakout = ramp * 20 * confidence
+c2_breakout = ramp * 25 * confidence
 
 # C3: Momentum Thrust (20 Pts)
 net_4d = df_score['Rolling_3D_Up_4'] - df_score['Rolling_3D_Down_4']
@@ -163,10 +170,10 @@ rank_4d = net_4d.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(p
 rank_1m = net_1m.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 c3_momentum = pd.Series((rank_4d * 10) + (rank_1m * 10)).fillna(0)
 
-# C4: Volume & Highs (15 Pts)
+# C4: Volume & Highs (20 Pts)
 rank_vol = df_score['Volume_Ratio'].fillna(1).rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_hl = df_score['Net_52W_High_Low'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
-c4_vol_hl = pd.Series(np.where(df_score['Volume_Ratio'].fillna(0) > 1.0, rank_vol * 7.5, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 7.5, 0)).fillna(0)
+c4_vol_hl = pd.Series(np.where(df_score['Volume_Ratio'].fillna(0) > 1.0, rank_vol * 10, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 10, 0)).fillna(0)
 
 # C5: Structural Trend (10 Pts)
 p200 = df_score['Pct_Above_200_EMA'].fillna(0)
@@ -178,13 +185,20 @@ hunting_ground = (df_score['Small_Pct_50_EMA'].fillna(0) + df_score['Micro_Pct_5
 gap = df_score['Large_Pct_50_EMA'].fillna(0) - hunting_ground
 c6_penalty = -np.clip((gap - 20) * 0.75, 0, 15)
 
-# C7: Washout Velocity Bonus (+15 Pts)
-min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20, min_periods=20).min()
-p20_5d_ago = df_score['Pct_Above_20_EMA'].shift(5)
-breadth_recovery = df_score['Pct_Above_20_EMA'] - p20_5d_ago
-c7_bonus = np.where((min_20d_p20 <= 10) & (df_score['Pct_Above_20_EMA'] >= 50) & (breadth_recovery >= 15), 15, 0)
+# C7: Washout Recovery Bonus (+15 Pts)
+min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20, min_periods=1).min()
+c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
 
-raw_score = pd.Series(c1_breadth).fillna(0) + pd.Series(c2_breakout).fillna(0) + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + pd.Series(c5_lt).fillna(0) + pd.Series(c6_penalty).fillna(0) + pd.Series(c7_bonus).fillna(0)
+# Final Score Calculation (Capped at 100)
+raw_score = (
+    pd.Series(c1_breadth).fillna(0) + 
+    pd.Series(c2_breakout).fillna(0) + 
+    c3_momentum.fillna(0) + 
+    c4_vol_hl.fillna(0) + 
+    pd.Series(c5_lt).fillna(0) + 
+    pd.Series(c6_penalty).fillna(0) + 
+    pd.Series(c7_bonus).fillna(0)
+)
 final_summary['Composite_Score'] = raw_score.fillna(0).clip(lower=0, upper=100).round().astype(int)
 
 final_summary = final_summary.drop(columns=['Valid_20', 'Valid_50', 'Valid_200'])
