@@ -3,7 +3,7 @@ import numpy as np
 import os
 
 print("=========================================================")
-print("  EOD BREADTH & REGIME ANALYSIS ENGINE")
+print("  EOD BREADTH & REGIME ANALYSIS ENGINE (v2.0)            ")
 print("=========================================================")
 
 parquet_file = "nse_6yr_historical.parquet"
@@ -15,57 +15,74 @@ df = pd.read_parquet(parquet_file)
 df['Date'] = pd.to_datetime(df['Date'])
 df = df.sort_values(by=['Symbol', 'Date']).reset_index(drop=True)
 
+# 1. AGE TRACKING & TURNOVER
+df['History_Days'] = df.groupby('Symbol').cumcount() + 1
+df['Prior_History_Days'] = df['History_Days'] - 1
 df['Daily_Turnover'] = df['Close'] * df['Volume']
-df['Turnover_45d_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(window=45, min_periods=10).mean())
-df['Cap_Rank'] = df.groupby('Date')['Turnover_45d_Avg'].rank(ascending=False, method='min')
+df['Prior_Turnover_20D_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(20, min_periods=1).mean())
 
+# 2. THE ACTIVE UNIVERSE GATES
+mature_valid = (df['Prior_History_Days'] >= 20) & (df['Prior_Turnover_20D_Avg'] >= 50_000_000)
+new_valid = (df['Prior_History_Days'] >= 1) & (df['Prior_History_Days'] < 20)
+df['Active_Universe'] = (mature_valid | new_valid) & (df['Volume'] > 0)
+
+df['Turnover_45d_Avg'] = df.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(window=45, min_periods=1).mean())
+df['Cap_Rank'] = df.groupby('Date')['Turnover_45d_Avg'].rank(ascending=False, method='min')
 conditions = [(df['Cap_Rank'] <= 100), (df['Cap_Rank'] > 100) & (df['Cap_Rank'] <= 250), (df['Cap_Rank'] > 250) & (df['Cap_Rank'] <= 500)]
 df['Liquidity_Category'] = np.select(conditions, ['Top 100 Liq', 'Mid 150 Liq', 'Lower 250 Liq'], default='Micro Liq')
 
-df['EMA_20'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=20).mean())
-df['EMA_50'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=50).mean())
-df['EMA_200'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=200).mean())
+# 3. EMA CALCULATIONS (Run from Day 1, Gated Later)
+df['EMA_20'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=1).mean())
+df['EMA_50'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=1).mean())
+df['EMA_200'] = df.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=1).mean())
 
+df['Valid_20_EMA'] = df['Active_Universe'] & (df['Prior_History_Days'] >= 20)
+df['Valid_50_EMA'] = df['Active_Universe'] & (df['Prior_History_Days'] >= 50)
+df['Valid_200_EMA'] = df['Active_Universe'] & (df['Prior_History_Days'] >= 200)
+
+df['Above_20_EMA'] = df['Valid_20_EMA'] & (df['Close'] > df['EMA_20'])
+df['Above_50_EMA'] = df['Valid_50_EMA'] & (df['Close'] > df['EMA_50'])
+df['Above_200_EMA'] = df['Valid_200_EMA'] & (df['Close'] > df['EMA_200'])
+
+# 4. DAILY PERFORMANCE & HIGHS
+df['Prev_Close'] = df.groupby('Symbol')['Close'].shift(1)
+df['Has_Prior_Close'] = df['Prev_Close'].notna()
 df['Daily_Pct'] = df.groupby('Symbol')['Close'].pct_change() * 100
-df['Daily_Pct'] = df['Daily_Pct'].replace([np.inf, -np.inf], 0).fillna(0) 
 df['Pct_1M'] = df.groupby('Symbol')['Close'].pct_change(periods=21) * 100
 
-traded_today = df['Volume'] > 0
-df['Gainer'] = (df['Daily_Pct'] > 0) & traded_today
-df['Loser'] = (df['Daily_Pct'] < 0) & traded_today
+df['Gainer'] = df['Active_Universe'] & df['Has_Prior_Close'] & (df['Daily_Pct'] > 0)
+df['Loser'] = df['Active_Universe'] & df['Has_Prior_Close'] & (df['Daily_Pct'] < 0)
 
-df['Rolling_52W_High'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=200).max())
-df['Rolling_52W_Low'] = df.groupby('Symbol')['Low'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=200).min())
+df['Rolling_52W_High'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=1).max())
+df['Rolling_52W_Low'] = df.groupby('Symbol')['Low'].transform(lambda x: x.shift(1).rolling(window=252, min_periods=1).min())
+df['Prior_ATH'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).cummax())
 
-df = df.dropna(subset=['EMA_200', 'Rolling_52W_High']).reset_index(drop=True)
+df['New_52W_High'] = df['Active_Universe'] & (df['Prior_History_Days'] >= 252) & (df['Close'] >= df['Rolling_52W_High'])
+df['New_52W_Low'] = df['Active_Universe'] & (df['Prior_History_Days'] >= 252) & (df['Close'] <= df['Rolling_52W_Low'])
+df['IPO_New_High'] = df['Active_Universe'] & (df['Prior_History_Days'] >= 1) & (df['Prior_History_Days'] < 252) & (df['Close'] >= df['Prior_ATH'])
 
-df['Above_20_EMA'] = df['Close'] > df['EMA_20']
-df['Above_50_EMA'] = df['Close'] > df['EMA_50']
-df['Above_200_EMA'] = df['Close'] > df['EMA_200']
+df['Up_4_Pct'] = df['Active_Universe'] & (df['Daily_Pct'] >= 4.0)
+df['Down_4_Pct'] = df['Active_Universe'] & (df['Daily_Pct'] <= -4.0)
+df['Up_25_1M'] = df['Active_Universe'] & (df['Pct_1M'] >= 25.0)
+df['Down_25_1M'] = df['Active_Universe'] & (df['Pct_1M'] <= -25.0)
 
-df['Valid_20_EMA'] = df['EMA_20'].notna()
-df['Valid_50_EMA'] = df['EMA_50'].notna()
-df['Valid_200_EMA'] = df['EMA_200'].notna()
+# 5. VOLATILITY & BREAKOUTS
+hl = df['High'] - df['Low']
+hpc = (df['High'] - df['Prev_Close']).abs()
+lpc = (df['Low'] - df['Prev_Close']).abs()
+df['TR'] = pd.concat([hl, hpc, lpc], axis=1).max(axis=1).fillna(hl)
+df['ATR_14'] = df.groupby('Symbol')['TR'].transform(lambda x: x.ewm(alpha=1/14, min_periods=1, adjust=False).mean())
 
-df['Up_4_Pct'] = (df['Daily_Pct'] >= 4.0) & traded_today
-df['Down_4_Pct'] = (df['Daily_Pct'] <= -4.0) & traded_today
-df['Up_25_1M'] = df['Pct_1M'] >= 25.0
-df['Down_25_1M'] = df['Pct_1M'] <= -25.0
-df['New_52W_High'] = (df['Close'] >= df['Rolling_52W_High']) & traded_today
-df['New_52W_Low'] = (df['Close'] <= df['Rolling_52W_Low']) & traded_today
-
-df['Prev_Close'] = df.groupby('Symbol')['Close'].shift(1)
-df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Prev_Close']), abs(df['Low'] - df['Prev_Close'])))
-df['ATR_14'] = df.groupby('Symbol')['TR'].transform(lambda x: x.ewm(alpha=1/14, min_periods=14, adjust=False).mean())
-df['Vol_20D_Avg'] = df.groupby('Symbol')['Volume'].transform(lambda x: x.shift(1).rolling(20, min_periods=20).mean())
-df['Max_20D_Prior'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(20, min_periods=20).max())
-
-df['20D_High'] = df['Close'] > df['Max_20D_Prior']
+df['Vol_20D_Avg'] = df.groupby('Symbol')['Volume'].transform(lambda x: x.shift(1).rolling(20, min_periods=1).mean())
+df['Max_20D_Prior'] = df.groupby('Symbol')['High'].transform(lambda x: x.shift(1).rolling(20, min_periods=1).max())
+df['Listing_Day_High'] = df.groupby('Symbol')['High'].transform('first')
 df['VCP_Tightness'] = (df['ATR_14'] / df['Close']) < 0.04
 df['Volume_Surge'] = df['Volume'] > (df['Vol_20D_Avg'] * 1.5)
-
 prior_tight = df.groupby('Symbol')['VCP_Tightness'].shift(1).astype(float).fillna(0.0).astype(bool)
-df['Is_Breakout'] = df['20D_High'] & df['Volume_Surge'] & prior_tight
+
+df['Mature_Breakout'] = (df['Prior_History_Days'] >= 20) & (df['Close'] > df['Max_20D_Prior'])
+df['IPO_Breakout'] = (df['Prior_History_Days'] >= 1) & (df['Prior_History_Days'] < 20) & (df['Close'] > df['Listing_Day_High'])
+df['Is_Breakout'] = df['Active_Universe'] & (df['Mature_Breakout'] | df['IPO_Breakout']) & df['Volume_Surge'] & prior_tight
 
 df['Is_Breakout_3d_ago'] = df.groupby('Symbol')['Is_Breakout'].shift(3).astype(float).fillna(0.0).astype(bool)
 df['Close_3d_ago'] = df.groupby('Symbol')['Close'].shift(3)
@@ -80,9 +97,9 @@ def get_liq_breadth(data, liq_name, prefix):
         Valid_20=('Valid_20_EMA', 'sum'), Valid_50=('Valid_50_EMA', 'sum'), Valid_200=('Valid_200_EMA', 'sum'),
         Above_20=('Above_20_EMA', 'sum'), Above_50=('Above_50_EMA', 'sum'), Above_200=('Above_200_EMA', 'sum')
     ).reset_index()
-    aggregated[f'{prefix}_Pct_20_EMA'] = (aggregated['Above_20'] / aggregated['Valid_20'].replace(0, 1)) * 100
-    aggregated[f'{prefix}_Pct_50_EMA'] = (aggregated['Above_50'] / aggregated['Valid_50'].replace(0, 1)) * 100
-    aggregated[f'{prefix}_Pct_200_EMA'] = (aggregated['Above_200'] / aggregated['Valid_200'].replace(0, 1)) * 100
+    aggregated[f'{prefix}_Pct_20_EMA'] = np.where(aggregated['Valid_20'] > 0, (aggregated['Above_20'] / aggregated['Valid_20']) * 100, np.nan)
+    aggregated[f'{prefix}_Pct_50_EMA'] = np.where(aggregated['Valid_50'] > 0, (aggregated['Above_50'] / aggregated['Valid_50']) * 100, np.nan)
+    aggregated[f'{prefix}_Pct_200_EMA'] = np.where(aggregated['Valid_200'] > 0, (aggregated['Above_200'] / aggregated['Valid_200']) * 100, np.nan)
     return aggregated[['Date', f'{prefix}_Pct_20_EMA', f'{prefix}_Pct_50_EMA', f'{prefix}_Pct_200_EMA']]
 
 large_breadth = get_liq_breadth(df, 'Top 100 Liq', 'Large')
@@ -90,63 +107,82 @@ mid_breadth = get_liq_breadth(df, 'Mid 150 Liq', 'Mid')
 small_breadth = get_liq_breadth(df, 'Lower 250 Liq', 'Small')
 micro_breadth = get_liq_breadth(df, 'Micro Liq', 'Micro')
 
+# 6. OVERALL BREADTH AGGREGATION
 overall_breadth = df.groupby('Date').agg(
-    Total_Universe=('Symbol', 'count'),
+    Total_Universe=('Active_Universe', 'sum'),
     Valid_20=('Valid_20_EMA', 'sum'), Valid_50=('Valid_50_EMA', 'sum'), Valid_200=('Valid_200_EMA', 'sum'),
     Advances=('Gainer', 'sum'), Declines=('Loser', 'sum'),
     Above_20_EMA=('Above_20_EMA', 'sum'), Above_50_EMA=('Above_50_EMA', 'sum'), Above_200_EMA=('Above_200_EMA', 'sum'),
     Up_4_Count=('Up_4_Pct', 'sum'), Down_4_Count=('Down_4_Pct', 'sum'),
     Up_25_1M_Count=('Up_25_1M', 'sum'), Down_25_1M_Count=('Down_25_1M', 'sum'),
-    New_52W_Highs=('New_52W_High', 'sum'), New_52W_Lows=('New_52W_Low', 'sum'),
+    New_52W_Highs=('New_52W_High', 'sum'), New_52W_Lows=('New_52W_Low', 'sum'), IPO_New_Highs=('IPO_New_High', 'sum'),
     Total_Up_Volume=('Up_Volume', 'sum'), Total_Down_Volume=('Down_Volume', 'sum'),
     T3_Breakouts=('Is_Breakout_3d_ago', 'sum'), T3_Wins=('Follow_Through_Win', 'sum')
 ).reset_index()
 
-overall_breadth['Pct_Above_20_EMA'] = (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20'].replace(0, 1)) * 100
-overall_breadth['Pct_Above_50_EMA'] = (overall_breadth['Above_50_EMA'] / overall_breadth['Valid_50'].replace(0, 1)) * 100
-overall_breadth['Pct_Above_200_EMA'] = (overall_breadth['Above_200_EMA'] / overall_breadth['Valid_200'].replace(0, 1)) * 100
+overall_breadth['Pct_Above_20_EMA'] = np.where(overall_breadth['Valid_20'] > 0, (overall_breadth['Above_20_EMA'] / overall_breadth['Valid_20']) * 100, np.nan)
+overall_breadth['Pct_Above_50_EMA'] = np.where(overall_breadth['Valid_50'] > 0, (overall_breadth['Above_50_EMA'] / overall_breadth['Valid_50']) * 100, np.nan)
+overall_breadth['Pct_Above_200_EMA'] = np.where(overall_breadth['Valid_200'] > 0, (overall_breadth['Above_200_EMA'] / overall_breadth['Valid_200']) * 100, np.nan)
 
 overall_breadth['Rolling_3D_Up_4'] = overall_breadth['Up_4_Count'].rolling(window=3).sum()
 overall_breadth['Rolling_3D_Down_4'] = overall_breadth['Down_4_Count'].rolling(window=3).sum()
 overall_breadth['Net_52W_High_Low'] = overall_breadth['New_52W_Highs'] - overall_breadth['New_52W_Lows']
 
-# Zero Division Handling Fallback
-overall_breadth['Total_Down_Volume'] = overall_breadth['Total_Down_Volume'].replace(0, 1)
-overall_breadth['Volume_Ratio'] = overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume']
-overall_breadth['Declines'] = overall_breadth['Declines'].replace(0, 1)
+# Zero-Division Guarded Math
+adv = overall_breadth['Advances'].astype(float)
+dec = overall_breadth['Declines'].astype(float)
+uv = overall_breadth['Total_Up_Volume'].astype(float)
+dv = overall_breadth['Total_Down_Volume'].astype(float)
 
-overall_breadth['AD_Spread'] = overall_breadth['Advances'] - overall_breadth['Declines']
+overall_breadth['Volume_Ratio'] = np.where(dv > 0, uv / dv, np.nan)
+overall_breadth['AD_Spread'] = adv - dec
 overall_breadth['MCO'] = overall_breadth['AD_Spread'].ewm(span=19, adjust=False).mean() - overall_breadth['AD_Spread'].ewm(span=39, adjust=False).mean()
-overall_breadth['TRIN'] = (overall_breadth['Advances'] / overall_breadth['Declines']) / (overall_breadth['Total_Up_Volume'] / overall_breadth['Total_Down_Volume'])
+overall_breadth['TRIN'] = np.where((adv > 0) & (dec > 0) & (uv > 0) & (dv > 0), (adv / dec) / (uv / dv), np.nan)
 
 final_summary = overall_breadth.merge(large_breadth, on='Date', how='left').merge(mid_breadth, on='Date', how='left').merge(small_breadth, on='Date', how='left').merge(micro_breadth, on='Date', how='left')
 
+# 7. CALIBRATED SCORING ENGINE (Max 100)
 df_score = final_summary.copy()
-p_blend = (0.65 * df_score['Pct_Above_20_EMA']) + (0.35 * df_score['Pct_Above_50_EMA'])
-c1_breadth = (p_blend / 100) * 25
-ft_rate = np.where(df_score['T3_Breakouts'] > 0, (df_score['T3_Wins'] / df_score['T3_Breakouts'].replace(0, 1)) * 100, 0)
-c2_breakout = np.where(ft_rate > 50, 25, 0)
+
+# C1: Core Breadth (20 Pts)
+p_blend = (0.65 * df_score['Pct_Above_20_EMA'].fillna(0)) + (0.35 * df_score['Pct_Above_50_EMA'].fillna(0))
+c1_breadth = (p_blend / 100) * 20
+
+# C2: Breakout Health (20 Pts) - Bayesian Smooth & 40-70% Ramp
+t3_b = df_score['T3_Breakouts'].astype(float)
+t3_w = df_score['T3_Wins'].astype(float)
+smoothed_rate = (t3_w + 5) / (t3_b + 10)
+ramp = np.clip((smoothed_rate - 0.40) / 0.30, 0, 1)
+confidence = np.clip(t3_b / 10, 0, 1)
+c2_breakout = ramp * 20 * confidence
+
+# C3: Momentum Thrust (20 Pts)
 net_4d = df_score['Rolling_3D_Up_4'] - df_score['Rolling_3D_Down_4']
 net_1m = df_score['Up_25_1M_Count'] - df_score['Down_25_1M_Count']
 rank_4d = net_4d.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_1m = net_1m.rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 c3_momentum = pd.Series((rank_4d * 10) + (rank_1m * 10)).fillna(0)
 
-rank_vol = df_score['Volume_Ratio'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
+# C4: Volume & Highs (15 Pts)
+rank_vol = df_score['Volume_Ratio'].fillna(1).rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
 rank_hl = df_score['Net_52W_High_Low'].rolling(126, min_periods=1).apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
-c4_vol_hl = pd.Series(np.where(df_score['Volume_Ratio'] > 1.0, rank_vol * 10, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 10, 0)).fillna(0)
+c4_vol_hl = pd.Series(np.where(df_score['Volume_Ratio'].fillna(0) > 1.0, rank_vol * 7.5, 0) + np.where(df_score['Net_52W_High_Low'] > 0, rank_hl * 7.5, 0)).fillna(0)
 
-p200 = df_score['Pct_Above_200_EMA']
-p200_slope = p200.diff(20) 
+# C5: Structural Trend (10 Pts)
+p200 = df_score['Pct_Above_200_EMA'].fillna(0)
+p200_slope = p200.diff(20).fillna(0)
 c5_lt = np.where((p200 > 50) & (p200_slope > 0), 10, np.where((p200 <= 50) & (p200_slope < 0), 0, 5))
 
-hunting_ground = (df_score['Small_Pct_50_EMA'] + df_score['Micro_Pct_50_EMA']) / 2
-gap = df_score['Large_Pct_50_EMA'] - hunting_ground
-# Smooth Penalty Math Implementation
+# C6: Divergence Penalty (-15 to 0)
+hunting_ground = (df_score['Small_Pct_50_EMA'].fillna(0) + df_score['Micro_Pct_50_EMA'].fillna(0)) / 2
+gap = df_score['Large_Pct_50_EMA'].fillna(0) - hunting_ground
 c6_penalty = -np.clip((gap - 20) * 0.75, 0, 15)
 
-min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20).min()
-c7_bonus = np.where((min_20d_p20 <= 10) & (p_blend >= 50), 15, 0)
+# C7: Washout Velocity Bonus (+15 Pts)
+min_20d_p20 = df_score['Pct_Above_20_EMA'].rolling(20, min_periods=20).min()
+p20_5d_ago = df_score['Pct_Above_20_EMA'].shift(5)
+breadth_recovery = df_score['Pct_Above_20_EMA'] - p20_5d_ago
+c7_bonus = np.where((min_20d_p20 <= 10) & (df_score['Pct_Above_20_EMA'] >= 50) & (breadth_recovery >= 15), 15, 0)
 
 raw_score = pd.Series(c1_breadth).fillna(0) + pd.Series(c2_breakout).fillna(0) + c3_momentum.fillna(0) + c4_vol_hl.fillna(0) + pd.Series(c5_lt).fillna(0) + pd.Series(c6_penalty).fillna(0) + pd.Series(c7_bonus).fillna(0)
 final_summary['Composite_Score'] = raw_score.fillna(0).clip(lower=0, upper=100).round().astype(int)
