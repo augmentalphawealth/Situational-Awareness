@@ -10,30 +10,49 @@ from kiteconnect import KiteConnect
 from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import sync_playwright
 
-api_key = os.environ.get("KITE_API_KEY")
-api_secret = os.environ.get("KITE_API_SECRET")
-user_id = os.environ.get("KITE_USER_ID")
-password = os.environ.get("KITE_PASSWORD")
-totp_secret = os.environ.get("KITE_TOTP")
-gh_pat = os.environ.get("GH_PAT")
-repo = os.environ.get("GITHUB_REPOSITORY")
+# 1. Fail-Fast Environment Check
+required_vars = {
+    "KITE_API_KEY": os.environ.get("KITE_API_KEY"),
+    "KITE_API_SECRET": os.environ.get("KITE_API_SECRET"),
+    "KITE_USER_ID": os.environ.get("KITE_USER_ID"),
+    "KITE_PASSWORD": os.environ.get("KITE_PASSWORD"),
+    "KITE_TOTP": os.environ.get("KITE_TOTP"),
+    "GH_PAT": os.environ.get("GH_PAT"),
+    "GITHUB_REPOSITORY": os.environ.get("GITHUB_REPOSITORY")
+}
+
+missing = [name for name, val in required_vars.items() if not val]
+if missing:
+    print(f"❌ Missing required environment variables: {', '.join(missing)}")
+    sys.exit(1)
+
+api_key = required_vars["KITE_API_KEY"]
+api_secret = required_vars["KITE_API_SECRET"]
+user_id = required_vars["KITE_USER_ID"]
+password = required_vars["KITE_PASSWORD"]
+totp_secret = required_vars["KITE_TOTP"]
+gh_pat = required_vars["GH_PAT"]
+repo = required_vars["GITHUB_REPOSITORY"]
 
 print("Initiating Daily Zerodha Token Rotation via Browser Automation...")
 
+def token_from_url(url):
+    """Safely extracts the request token from a URL string."""
+    return parse_qs(urlparse(url).query).get("request_token", [None])[0]
+
 def get_request_token():
+    extracted_token = []
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         page = context.new_page()
-        
-        extracted_token = []
 
-        # Background Network Listener to catch the token mid-flight before localhost crashes
         def intercept_request(request):
             if "request_token=" in request.url:
-                token = parse_qs(urlparse(request.url).query).get("request_token", [None])
-                if token and token[0]:
-                    extracted_token.append(token[0])
+                token = token_from_url(request.url)
+                if token and token not in extracted_token:
+                    extracted_token.append(token)
 
         page.on("request", intercept_request)
         
@@ -41,61 +60,113 @@ def get_request_token():
             login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
             page.goto(login_url, wait_until="domcontentloaded")
             
-            # 1. Login Screen
+            # Login Screen
             page.wait_for_selector("#userid", timeout=15000)
             page.fill("#userid", user_id)
             page.fill("#password", password)
             page.click("button[type='submit']")
             
-            # 2. Two-Factor Authentication (2FA) Screen
-            page.wait_for_selector("input[type='password']", state="hidden", timeout=15000)
-            time.sleep(2)  
+            # 2FA Screen: Explicitly switch to TOTP mode
+            time.sleep(3) 
             
-            totp_token = pyotp.TOTP(totp_secret).now()
+            selectors_to_click = [
+                "text=External Authenticator",
+                "text=Use TOTP",
+                "text=TOTP",
+                "text=Problem with App Code"
+            ]
             
-            try:
-                totp_input = page.locator("input[type='number'], input[label*='TOTP']").first
-                totp_input.fill(totp_token)
-            except Exception:
-                page.keyboard.type(totp_token)
+            for selector in selectors_to_click:
+                try:
+                    locator = page.locator(selector).first
+                    if locator.is_visible(timeout=2000):
+                        locator.click()
+                        time.sleep(1)
+                        # If we clicked 'Problem with App Code', we must click 'External Authenticator' next
+                        if "App Code" in selector:
+                            ext_auth = page.locator("text=External Authenticator").first
+                            if ext_auth.is_visible(timeout=2000):
+                                ext_auth.click()
+                                time.sleep(1)
+                        break
+                except Exception:
+                    continue
+                    
+            # Find the exact TOTP input box
+            totp_selectors = [
+                "input[autocomplete='one-time-code']",
+                "input[name*='totp' i]",
+                "input[placeholder*='TOTP' i]",
+                "input[type='number']",
+                "input[type='text']"
+            ]
+            
+            totp_input = None
+            for selector in totp_selectors:
+                try:
+                    candidate = page.locator(selector).first
+                    if candidate.is_visible(timeout=2000):
+                        totp_input = candidate
+                        break
+                except Exception:
+                    continue
+                    
+            if not totp_input:
+                raise RuntimeError("Visible TOTP input box was not found on screen.")
                 
+            totp_token = pyotp.TOTP(totp_secret).now()
+            totp_input.fill(totp_token)
+            
+            # Click submit if available, otherwise let Zerodha auto-submit
             try:
                 submit_2fa = page.locator("button[type='submit']")
                 if submit_2fa.is_visible(timeout=2000):
                     submit_2fa.click()
-            except:
+            except Exception:
                 pass
             
-            # 3. Wait for the network listener to catch the token
+            # Wait for the network listener to catch the token
             for _ in range(25):
                 if extracted_token:
                     break
-                
                 try:
+                    # Clear final app authorization screen if prompted
                     auth_btn = page.locator("button:has-text('Authorize'), button:has-text('I understand'), button:has-text('Accept')")
                     if auth_btn.count() > 0 and auth_btn.first.is_visible():
                         auth_btn.first.click()
-                except:
+                except Exception:
                     pass
-                    
                 time.sleep(1)
             
             if not extracted_token:
-                print(f"❌ Timeout reached. Final URL was: {page.url}")
-                
-            browser.close()
-            return extracted_token[0] if extracted_token else None
-            
+                current_token = token_from_url(page.url)
+                if current_token:
+                    extracted_token.append(current_token)
+                else:
+                    print("❌ Timeout reached before request token was captured. (URL redacted for security)")
+                    
         except Exception as e:
-            print(f"❌ Browser Automation Error: {e}")
+            # Crash Rescue: If localhost connection refused, the URL still contains the token
+            current_token = token_from_url(page.url)
+            if current_token and current_token not in extracted_token:
+                extracted_token.append(current_token)
+                
+            if extracted_token:
+                print("✅ Redirect navigation crashed (expected on GitHub Actions), but request token was successfully captured.")
+            else:
+                print(f"❌ Browser automation error: {type(e).__name__}: {e}")
+                
+        finally:
+            # Close safely to avoid ghost processes
             browser.close()
-            sys.exit(1)
+            
+    return extracted_token[0] if extracted_token else None
 
 # Execute Browser Login
 req_token = get_request_token()
 
 if not req_token:
-    print("❌ Failed to extract Request Token from URL. Check if Zerodha updated their login page.")
+    print("❌ Failed to extract Request Token. Automation aborted.")
     sys.exit(1)
 
 # --- Exchange Request Token for Access Token ---
@@ -112,10 +183,6 @@ except Exception as e:
 # --- GitHub Secret Injection Phase (PyNaCl Encryption) ---
 print("Injecting Token into GitHub Secrets...")
 try:
-    if not gh_pat:
-        print("❌ GH_PAT missing from environment variables.")
-        sys.exit(1)
-        
     headers = {
         "Authorization": f"Bearer {gh_pat}",
         "Accept": "application/vnd.github+json",
@@ -142,9 +209,9 @@ try:
     if upload_res.status_code in [201, 204]:
         print("✅ KITE_ACCESS_TOKEN secret successfully updated in GitHub.")
     else:
-        print(f"❌ Failed to upload secret to GitHub: {upload_res.text}")
+        print(f"❌ Failed to upload secret to GitHub: {upload_res.status_code} - {upload_res.text}")
         sys.exit(1)
 
 except Exception as e:
-    print("❌ Error communicating with GitHub API:", e)
+    print(f"❌ Error communicating with GitHub API: {e}")
     sys.exit(1)
