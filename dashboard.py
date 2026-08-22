@@ -239,6 +239,7 @@ prev = df_filtered.iloc[-2] if len(df_filtered) > 1 else latest
 score = safe_int(latest.get('Composite_Score', 0))
 p_fast = latest.get('Pct_Above_20_EMA', 0)
 ft_rate = (latest.get('T3_Wins', 0) / latest.get('T3_Breakouts', 1) * 100) if latest.get('T3_Breakouts', 0) > 0 else 0
+ipo_highs = safe_int(latest.get('IPO_New_Highs', 0))
 
 if score >= 71:
     action_zone, score_color = "AGGRESSIVE MTF ZONE", "#22c55e"
@@ -294,7 +295,7 @@ with st.container(border=True):
     st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# CORE FIX: Holiday Guard & Live Override Logic
+# Flatline Guard & Live Override Logic
 # -------------------------------------------------------------
 advances = safe_int(latest.get('Advances', 0))
 declines = safe_int(latest.get('Declines', 0))
@@ -304,15 +305,10 @@ actual_date_str = f"{st.session_state.analysis_date.day} {st.session_state.analy
 if is_live_active and st.session_state.analysis_date == max_date:
     live_adv = safe_int(live_latest.get('Advances', advances))
     live_dec = safe_int(live_latest.get('Declines', declines))
-    
-    # Only override the UI if we have genuine intraday volume (A+D > 0)
-    # If this is a flatline (0/0), it safely ignores it and retains the Friday EOD data
     if (live_adv + live_dec) > 0:
         advances = live_adv
         declines = live_dec
         total_univ = safe_int(live_latest.get('Total_Universe', total_univ))
-        
-        # Override the header date text so you see the live date natively
         live_date_obj = pd.to_datetime(live_latest['Date'])
         actual_date_str = f"{live_date_obj.day} {live_date_obj.strftime('%B %Y')} <span style='color:#eab308; font-weight:800;'>(⚡ LIVE INTRADAY A/D SNAPSHOT)</span>"
 # -------------------------------------------------------------
@@ -365,25 +361,48 @@ with hero_col2:
             </div>
         """, unsafe_allow_html=True)
         st.markdown("<hr style='margin: 8px 0px;'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='card-title' style='margin-left: 10px;'>REGIME CONTEXT (EOD SCORE ALIGNED)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='card-title' style='margin-left: 10px;'>DECISION ENGINE: KEY REGIME DRIVERS</div>", unsafe_allow_html=True)
         
-        regime_html = f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px;'>• Follow-Through Win Rate: <b>{ft_rate:.1f}%</b></div>"
-        regime_html += f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px;'>• 200 EMA Breadth: <b>{latest.get('Pct_Above_200_EMA', 0):.1f}%</b></div>"
+        # Core Clean Metrics
+        wr_c = "#16a34a" if ft_rate >= 45 else "#dc2626"
+        p20_c = "#16a34a" if p_fast >= 50 else "#dc2626"
+        ipo_c = "#2563eb" if ipo_highs > 0 else "#64748b"
+        
+        regime_html = f"""
+        <div style='font-size: 12px; margin-bottom: 8px; padding-left: 10px;'>
+            <div style='margin-bottom: 4px;'>• Follow-Through Rate: <b style='color:{wr_c};'>{ft_rate:.1f}%</b></div>
+            <div style='margin-bottom: 4px;'>• Fast Breadth (>20 EMA): <b style='color:{p20_c};'>{p_fast:.1f}%</b></div>
+            <div style='margin-bottom: 4px;'>• IPO Leading Edge: <b style='color:{ipo_c};'>{ipo_highs} New ATHs</b></div>
+        </div>
+        """
+        
+        # Dynamic Extreme Alerts
+        extremes = []
         
         latest_mco = latest.get('MCO', np.nan)
-        latest_trin = latest.get('TRIN', np.nan)
-        
         if not pd.isna(latest_mco):
-            mco_alert = "Extremely Overbought (Exhaustion Risk)" if latest_mco >= 50 else "Extremely Oversold (Washout)" if latest_mco <= -50 else "Neutral Momentum"
-            mco_col = "#dc2626" if latest_mco >= 50 else "#16a34a" if latest_mco <= -50 else "#334155"
-            regime_html += f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px;'>• MCO Exertion: <b style='color:{mco_col};'>{latest_mco:.1f} — {mco_alert}</b></div>"
+            if latest_mco >= 50: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>MCO: {latest_mco:.1f}</b> <span style='color:#dc2626;'>(Extreme Overbought / Exhaustion Risk)</span></div>")
+            elif latest_mco <= -50: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Extreme Oversold / Washout)</span></div>")
             
+        latest_trin = latest.get('TRIN', np.nan)
         if not pd.isna(latest_trin):
-            trin_alert = "Panic Selling" if latest_trin >= 2.0 else "Aggressive Demand" if latest_trin <= 0.5 else "Balanced Trade"
-            trin_col = "#dc2626" if latest_trin >= 2.0 else "#16a34a" if latest_trin <= 0.5 else "#334155"
-            regime_html += f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px;'>• TRIN Reading: <b style='color:{trin_col};'>{latest_trin:.2f} — {trin_alert}</b></div>"
-        else:
-            regime_html += f"<div style='font-size: 11px; margin-bottom: 3px; padding-left: 10px; color:#94a3b8;'>• TRIN Reading: <b>N/A (Zero Declines)</b></div>"
+            if latest_trin >= 2.0: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#dc2626;'>(Panic Selling Detected)</span></div>")
+            elif latest_trin <= 0.5: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand)</span></div>")
+            
+        vol_ratio = latest.get('Volume_Ratio', np.nan)
+        if not pd.isna(vol_ratio):
+            if vol_ratio >= 2.0: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#16a34a;'>(Heavy Accumulation)</span></div>")
+            elif vol_ratio <= 0.5: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#dc2626;'>(Heavy Distribution)</span></div>")
+            
+        net_hl = safe_int(latest.get('Net_52W_High_Low', 0))
+        if net_hl >= 50: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Net 52W H/L: +{net_hl}</b> <span style='color:#16a34a;'>(Broad Expansion)</span></div>")
+        elif net_hl <= -50: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Net 52W H/L: {net_hl}</b> <span style='color:#dc2626;'>(Broad Capitulation)</span></div>")
+
+        if extremes:
+            regime_html += "<div style='border-top: 1px dashed #cbd5e1; margin-top: 8px; padding-top: 8px; padding-left: 10px;'>"
+            regime_html += "<div style='font-size: 11px; font-weight: 800; color: #f97316; margin-bottom: 4px; text-transform: uppercase;'>⚠️ Actionable Extremes Triggered:</div>"
+            regime_html += "".join(extremes)
+            regime_html += "</div>"
             
         st.markdown(regime_html, unsafe_allow_html=True)
 
