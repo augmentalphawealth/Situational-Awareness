@@ -1,0 +1,9 @@
+{
+  "mode": "recovery_only",
+  "database_before": "2026-08-21",
+  "latest_market_date": "2026-08-21",
+  "recovered_dates": [],
+  "backfill_rows": 0,
+  "today_fetched": false,
+  "backup": "eod_backups/nse_6yr_historical.backup.20260823_003536.parquet"
+}
