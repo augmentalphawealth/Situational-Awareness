@@ -293,22 +293,33 @@ with st.container(border=True):
     
     st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
 
+# -------------------------------------------------------------
+# CORE FIX: Holiday Guard & Live Override Logic
+# -------------------------------------------------------------
+advances = safe_int(latest.get('Advances', 0))
+declines = safe_int(latest.get('Declines', 0))
+total_univ = safe_int(latest.get('Total_Universe', 2400))
 actual_date_str = f"{st.session_state.analysis_date.day} {st.session_state.analysis_date.strftime('%B %Y')}"
+
 if is_live_active and st.session_state.analysis_date == max_date:
-    actual_date_str = f"{actual_date_str} <span style='color:#eab308; font-weight:800;'>(⚡ LIVE INTRADAY A/D SNAPSHOT)</span>"
+    live_adv = safe_int(live_latest.get('Advances', advances))
+    live_dec = safe_int(live_latest.get('Declines', declines))
+    
+    # Only override the UI if we have genuine intraday volume (A+D > 0)
+    # If this is a flatline (0/0), it safely ignores it and retains the Friday EOD data
+    if (live_adv + live_dec) > 0:
+        advances = live_adv
+        declines = live_dec
+        total_univ = safe_int(live_latest.get('Total_Universe', total_univ))
+        
+        # Override the header date text so you see the live date natively
+        live_date_obj = pd.to_datetime(live_latest['Date'])
+        actual_date_str = f"{live_date_obj.day} {live_date_obj.strftime('%B %Y')} <span style='color:#eab308; font-weight:800;'>(⚡ LIVE INTRADAY A/D SNAPSHOT)</span>"
+# -------------------------------------------------------------
 
 st.markdown(f"<p style='color: #475569; font-size: 13px; font-weight: 600; margin-top: 15px;'>Market Breadth Status for: <span style='color:#0f172a;'>{actual_date_str}</span></p>", unsafe_allow_html=True)
 
 hero_col1, hero_col2 = st.columns([1.5, 2.5])
-
-advances = safe_int(latest.get('Advances', 0))
-declines = safe_int(latest.get('Declines', 0))
-total_univ = safe_int(latest.get('Total_Universe', 2400))
-
-if is_live_active and st.session_state.analysis_date == max_date:
-    advances = safe_int(live_latest.get('Advances', advances))
-    declines = safe_int(live_latest.get('Declines', declines))
-    total_univ = safe_int(live_latest.get('Total_Universe', total_univ))
 
 total_adv_dec = advances + declines
 adv_pct = round((advances / total_adv_dec) * 100, 1) if total_adv_dec > 0 else 0
