@@ -24,7 +24,7 @@ st.markdown("""
     .action-banner { background-color: #0f172a; color: #f8fafc; padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; text-align: center; margin-top: 8px; }
     .stButton>button { border-radius: 6px; font-weight: 600; font-size: 12px; padding: 0.3rem 0.5rem; }
     div[data-testid="stDateInput"] input { padding: 0.3rem; font-size: 13px; text-align: center; }
-    div[data-testid="stDateInput"] label { font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: -5px; }
+    div[data-testid="stDateInput"] label { display: none; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -189,7 +189,7 @@ with head_col2:
     nav1, nav2, nav3 = st.columns([1, 1.4, 1])
     with nav1: st.button("◀ Prev", on_click=step_prev_day, use_container_width=True)
     with nav2:
-        selected_date = st.date_input("📅 Select Historical Date", value=st.session_state.analysis_date, min_value=min_date, max_value=max_date, format="DD/MM/YYYY")
+        selected_date = st.date_input("Date", value=st.session_state.analysis_date, min_value=min_date, max_value=max_date, format="DD/MM/YYYY", label_visibility="collapsed")
         if selected_date != st.session_state.analysis_date.date():
             st.session_state.analysis_date = pd.to_datetime(selected_date)
             st.rerun()
@@ -334,7 +334,7 @@ with hero_col1:
             <div style='text-align: center; margin-top: -10px; padding-bottom: 8px;'>
                 <span style='color: #16a34a; font-size: 15px; font-weight: 800;'>{advances} ADVANCES</span> &nbsp;&nbsp;
                 <span style='color: #dc2626; font-size: 15px; font-weight: 800;'>{declines} DECLINES</span>
-                <p style='color: {adv_change_color}; font-size: 12px; font-weight: 700; margin-top: 4px; margin-bottom: 0px;'>{adv_change_str} vs Yesterday EOD (VIP Univ {total_univ})</p>
+                <p style='color: {adv_change_color}; font-size: 12px; font-weight: 700; margin-top: 4px; margin-bottom: 0px;'>{adv_change_str} vs Yesterday EOD (Active Univ {total_univ})</p>
             </div>
         """, unsafe_allow_html=True)
 
@@ -508,12 +508,12 @@ with st.container(border=True):
     plot_df['T3_Total'] = t3_breaks
     
     latest_wr = plot_df['Win_Rate_Plot'].iloc[-1] if not pd.isna(plot_df['Win_Rate_Plot'].iloc[-1]) else 0
-    wr_color = '#16a34a' if latest_wr >= 40 else '#dc2626'
+    wr_color = '#16a34a' if latest_wr >= 45 else '#dc2626'
     
     st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>VCP BREAKOUT FOLLOW-THROUGH (T+3 WIN RATE) &nbsp;|&nbsp; LATEST: <span style='color:{wr_color};'>{latest_wr:.1f}%</span> (3-Day Cohort)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >40% establishes a tradable momentum environment.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >=45% begins scoring in the momentum composite.</div>", unsafe_allow_html=True)
     
-    colors_wr = ['#22c55e' if val >= 40 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
+    colors_wr = ['#22c55e' if val >= 45 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
     
     fig_ft = go.Figure(go.Bar(
         x=plot_df['Date'], 
@@ -523,7 +523,7 @@ with st.container(border=True):
         hovertemplate='<b>Win Rate: %{y:.1f}%</b><br>Total Breakouts: %{customdata[0]}<br>Wins: %{customdata[1]}<br>Fails: %{customdata[2]}<extra></extra>'
     ))
     
-    fig_ft.add_hline(y=40, line_dash="dash", line_color="#22c55e", annotation_text="40% Edge Baseline", annotation_position="top left")
+    fig_ft.add_hline(y=45, line_dash="dash", line_color="#22c55e", annotation_text="45% Edge Baseline", annotation_position="top left")
     
     fig_ft.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
     fig_ft.update_yaxes(range=[0, 100], gridcolor='#f1f5f9', title="Win Rate %")
