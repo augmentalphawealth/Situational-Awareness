@@ -238,8 +238,8 @@ prev = df_filtered.iloc[-2] if len(df_filtered) > 1 else latest
 
 score = safe_int(latest.get('Composite_Score', 0))
 p_fast = latest.get('Pct_Above_20_EMA', 0)
+p_mid = latest.get('Pct_Above_50_EMA', 0)
 ft_rate = (latest.get('T3_Wins', 0) / latest.get('T3_Breakouts', 1) * 100) if latest.get('T3_Breakouts', 0) > 0 else 0
-ipo_highs = safe_int(latest.get('IPO_New_Highs', 0))
 
 if score >= 71:
     action_zone, score_color = "AGGRESSIVE MTF ZONE", "#22c55e"
@@ -363,32 +363,39 @@ with hero_col2:
         st.markdown("<hr style='margin: 8px 0px;'>", unsafe_allow_html=True)
         st.markdown(f"<div class='card-title' style='margin-left: 10px;'>DECISION ENGINE: KEY REGIME DRIVERS</div>", unsafe_allow_html=True)
         
-        # Core Clean Metrics
+        # Clean Core Metrics (No MCO/TRIN Clutter)
         wr_c = "#16a34a" if ft_rate >= 45 else "#dc2626"
         p20_c = "#16a34a" if p_fast >= 50 else "#dc2626"
-        ipo_c = "#2563eb" if ipo_highs > 0 else "#64748b"
+        p50_c = "#16a34a" if p_mid >= 50 else "#dc2626"
         
         regime_html = f"""
         <div style='font-size: 12px; margin-bottom: 8px; padding-left: 10px;'>
             <div style='margin-bottom: 4px;'>• Follow-Through Rate: <b style='color:{wr_c};'>{ft_rate:.1f}%</b></div>
             <div style='margin-bottom: 4px;'>• Fast Breadth (>20 EMA): <b style='color:{p20_c};'>{p_fast:.1f}%</b></div>
-            <div style='margin-bottom: 4px;'>• IPO Leading Edge: <b style='color:{ipo_c};'>{ipo_highs} New ATHs</b></div>
+            <div style='margin-bottom: 4px;'>• Trend Breadth (>50 EMA): <b style='color:{p50_c};'>{p_mid:.1f}%</b></div>
         </div>
         """
         
-        # Dynamic Extreme Alerts
+        # Dynamic Actionable Extremes (The No-BS Alerts)
         extremes = []
         
         latest_mco = latest.get('MCO', np.nan)
         if not pd.isna(latest_mco):
-            if latest_mco >= 50: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>MCO: {latest_mco:.1f}</b> <span style='color:#dc2626;'>(Extreme Overbought / Exhaustion Risk)</span></div>")
-            elif latest_mco <= -50: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Extreme Oversold / Washout)</span></div>")
-            
+            if latest_mco >= 80:
+                if p_fast <= 40:
+                    extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Ignition Thrust. Institutions Buying the Dip. Not Overbought.)</span></div>")
+                elif p_fast >= 75:
+                    extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>MCO: {latest_mco:.1f}</b> <span style='color:#dc2626;'>(Dangerously Overextended. High Risk of Pullback/Chop. Do Not Chase.)</span></div>")
+            elif latest_mco <= -70:
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Severe Washout. Sellers Exhausted. Look for Bounces.)</span></div>")
+                
         latest_trin = latest.get('TRIN', np.nan)
         if not pd.isna(latest_trin):
-            if latest_trin >= 2.0: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#dc2626;'>(Panic Selling Detected)</span></div>")
-            elif latest_trin <= 0.5: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand)</span></div>")
-            
+            if latest_trin >= 2.0: 
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Panic Capitulation. Contrarian Bottom Signal.)</span></div>")
+            elif latest_trin <= 0.5: 
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand. Heavy Institutional Buying.)</span></div>")
+                
         vol_ratio = latest.get('Volume_Ratio', np.nan)
         if not pd.isna(vol_ratio):
             if vol_ratio >= 2.0: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#16a34a;'>(Heavy Accumulation)</span></div>")
@@ -397,6 +404,10 @@ with hero_col2:
         net_hl = safe_int(latest.get('Net_52W_High_Low', 0))
         if net_hl >= 50: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Net 52W H/L: +{net_hl}</b> <span style='color:#16a34a;'>(Broad Expansion)</span></div>")
         elif net_hl <= -50: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Net 52W H/L: {net_hl}</b> <span style='color:#dc2626;'>(Broad Capitulation)</span></div>")
+
+        ipo_highs = safe_int(latest.get('IPO_New_Highs', 0))
+        if ipo_highs >= 15:
+            extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>IPO Highs: {ipo_highs}</b> <span style='color:#f97316;'>(Speculative Frenzy. Market is hunting for high-beta risk.)</span></div>")
 
         if extremes:
             regime_html += "<div style='border-top: 1px dashed #cbd5e1; margin-top: 8px; padding-top: 8px; padding-left: 10px;'>"
