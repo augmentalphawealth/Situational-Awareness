@@ -139,17 +139,20 @@ def load_agg_data():
     return pd.DataFrame()
 
 @st.cache_data(max_entries=1, show_spinner=False)
-def load_master_parquet():
-    if os.path.exists("nse_6yr_historical.parquet"):
+def load_trailing_cache():
+    file_name = "trailing_cache.parquet"
+    if os.path.exists(file_name):
         try:
-            df = pd.read_parquet("nse_6yr_historical.parquet")
+            df = pd.read_parquet(file_name)
             df['Date'] = pd.to_datetime(df['Date'])
             return df
         except Exception: pass
+    
+    url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{get_latest_commit_sha()}/{file_name}"
     try:
-        parquet_bytes = read_remote_file("nse_6yr_historical.parquet")
-        if parquet_bytes:
-            df = pd.read_parquet(BytesIO(parquet_bytes.encode('latin1')))
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            df = pd.read_parquet(BytesIO(res.content))
             df['Date'] = pd.to_datetime(df['Date'])
             return df
     except Exception: pass
@@ -572,50 +575,22 @@ if st.session_state.analysis_date == max_date:
     selected_date_display = actual_date_str
 st.markdown(f"<p style='color: #64748b; font-size: 13px;'>Filter the underlying constituent stocks for <b>{selected_date_display}</b></p>", unsafe_allow_html=True)
 
-@st.cache_data(ttl=300)
+@st.cache_data(max_entries=10, show_spinner=False)
 def get_drilldown_data(target_date):
     try:
-        raw_df = load_master_parquet()
-        if raw_df.empty: return pd.DataFrame()
+        df = load_trailing_cache()
+        if df.empty: return pd.DataFrame()
         
         target_date_normalized = pd.Timestamp(target_date).normalize()
-        start_date = target_date_normalized - pd.Timedelta(days=300)
-        subset = raw_df[(raw_df['Date'] >= start_date) & (raw_df['Date'] <= target_date_normalized)].copy()
         
-        if subset.empty: return pd.DataFrame()
-        subset = subset.sort_values(['Symbol', 'Date'])
+        # Just filter for the requested date, no heavy math needed!
+        day_data = df[df['Date'].dt.normalize() == target_date_normalized].copy()
+        if day_data.empty: return pd.DataFrame()
         
-        try:
-            subset['History_Days'] = subset.groupby('Symbol').cumcount() + 1
-            subset['Prior_History_Days'] = subset['History_Days'] - 1
-            subset['Daily_Turnover'] = subset['Close'] * subset['Volume']
-            subset['Prior_Turnover_20D_Avg'] = subset.groupby('Symbol')['Daily_Turnover'].transform(lambda x: x.shift(1).rolling(20, min_periods=1).mean())
-            
-            mature_valid = (subset['Prior_History_Days'] >= 20) & (subset['Prior_Turnover_20D_Avg'] >= 50_000_000)
-            new_valid = (subset['Prior_History_Days'] >= 1) & (subset['Prior_History_Days'] < 20)
-            subset['Active_Universe'] = (mature_valid | new_valid) & (subset['Volume'] > 0)
-            
-            subset['EMA_20'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=20, adjust=False, min_periods=1).mean())
-            subset['EMA_50'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=50, adjust=False, min_periods=1).mean())
-            subset['EMA_200'] = subset.groupby('Symbol')['Close'].transform(lambda x: x.ewm(span=200, adjust=False, min_periods=1).mean())
-            
-            subset['Daily_%_Change'] = subset.groupby('Symbol')['Close'].pct_change() * 100
-            subset['1M_%_Change'] = subset.groupby('Symbol')['Close'].pct_change(periods=21) * 100
-            subset['52W_High'] = subset.groupby('Symbol')['High'].transform(lambda x: x.rolling(window=252, min_periods=1).max())
-            subset['52W_Low'] = subset.groupby('Symbol')['Low'].transform(lambda x: x.rolling(window=252, min_periods=1).min())
-            subset['Prior_ATH'] = subset.groupby('Symbol')['High'].transform(lambda x: x.shift(1).cummax())
-        except Exception as e:
-            st.error(f"Error calculating technical indicators: {str(e)}")
-            return pd.DataFrame()
-        
-        subset_dates = subset['Date'].dt.normalize()
-        closest_date = subset_dates[subset_dates <= target_date_normalized].max()
-        if pd.isna(closest_date): return pd.DataFrame()
-        
-        day_data = subset[subset['Date'].dt.normalize() == closest_date].copy()
+        # Keep only Active Universe and round percentages
         day_data = day_data[day_data['Active_Universe']].copy()
-        day_data['Daily_%_Change'] = day_data['Daily_%_Change'].round(2)
-        day_data['1M_%_Change'] = day_data['1M_%_Change'].round(2)
+        day_data['Daily_Pct'] = day_data['Daily_Pct'].round(2)
+        day_data['Pct_1M'] = day_data['Pct_1M'].round(2)
         
         return day_data
     except Exception as e:
@@ -636,25 +611,27 @@ if not drill_data.empty:
     res = drill_data.copy()
     if param_choices:
         for param in param_choices:
-            if param == "Advances (Stocks in Green)": res = res[res['Daily_%_Change'] > 0]
-            elif param == "Declines (Stocks in Red)": res = res[res['Daily_%_Change'] < 0]
-            elif param == "Stocks > 20 EMA (Mature Only)": res = res[(res['Close'] > res['EMA_20']) & (res['Prior_History_Days'] >= 20)]
-            elif param == "Stocks > 50 EMA (Mature Only)": res = res[(res['Close'] > res['EMA_50']) & (res['Prior_History_Days'] >= 50)]
-            elif param == "Stocks > 200 EMA (Mature Only)": res = res[(res['Close'] > res['EMA_200']) & (res['Prior_History_Days'] >= 200)]
-            elif param == "Up 4% or more Today": res = res[res['Daily_%_Change'] >= 4.0]
-            elif param == "Down 4% or more Today": res = res[res['Daily_%_Change'] <= -4.0]
-            elif param == "1-Month 25% Winners": res = res[res['1M_%_Change'] >= 25.0]
-            elif param == "1-Month 25% Losers": res = res[res['1M_%_Change'] <= -25.0]
-            elif param == "New 52-Week Highs (Mature > 1Yr)": res = res[(res['Close'] >= res['52W_High']) & (res['Prior_History_Days'] >= 252)]
-            elif param == "New IPO/Listing Highs (< 1Yr)": res = res[(res['Close'] >= res['Prior_ATH']) & (res['Prior_History_Days'] >= 1) & (res['Prior_History_Days'] < 252)]
+            if param == "Advances (Stocks in Green)": res = res[res['Gainer'] == True]
+            elif param == "Declines (Stocks in Red)": res = res[res['Loser'] == True]
+            elif param == "Stocks > 20 EMA (Mature Only)": res = res[res['Above_20_EMA'] == True]
+            elif param == "Stocks > 50 EMA (Mature Only)": res = res[res['Above_50_EMA'] == True]
+            elif param == "Stocks > 200 EMA (Mature Only)": res = res[res['Above_200_EMA'] == True]
+            elif param == "Up 4% or more Today": res = res[res['Up_4_Pct'] == True]
+            elif param == "Down 4% or more Today": res = res[res['Down_4_Pct'] == True]
+            elif param == "1-Month 25% Winners": res = res[res['Up_25_1M'] == True]
+            elif param == "1-Month 25% Losers": res = res[res['Down_25_1M'] == True]
+            elif param == "New 52-Week Highs (Mature > 1Yr)": res = res[res['New_52W_High'] == True]
+            elif param == "New IPO/Listing Highs (< 1Yr)": res = res[res['IPO_New_High'] == True]
 
-        res = res[['Symbol', 'Close', 'Daily_%_Change', '1M_%_Change']].sort_values('Daily_%_Change', ascending=False)
+        res = res[['Symbol', 'Close', 'Daily_Pct', 'Pct_1M']].sort_values('Daily_Pct', ascending=False)
+        res = res.rename(columns={'Daily_Pct': 'Daily_%_Change', 'Pct_1M': '1M_%_Change'})
+        
         st.write(f"**Found {len(res)} matching VIP active stocks** for {selected_date_display}:")
         st.dataframe(res, use_container_width=True, height=350)
     else:
         st.info("👆 Select one or more parameters above to filter the VIP stock list.")
 else:
-    st.info("💡 Deep dive list requires 'nse_6yr_historical.parquet' in repository.")
+    st.info("💡 Deep dive list requires 'trailing_cache.parquet' in repository.")
 
 st.markdown("<br><hr>", unsafe_allow_html=True)
 bot_col, _ = st.columns([1.5, 4])
