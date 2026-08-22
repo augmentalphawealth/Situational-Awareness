@@ -376,25 +376,25 @@ with hero_col2:
         </div>
         """
         
-        # Dynamic Actionable Extremes (The No-BS Alerts)
+        # Dynamic Actionable Extremes (Sentiment Linked & Strictly Logical)
         extremes = []
         
-        latest_mco = latest.get('MCO', np.nan)
-        if not pd.isna(latest_mco):
-            if latest_mco >= 80:
-                if p_fast <= 40:
-                    extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Ignition Thrust. Institutions Buying the Dip. Not Overbought.)</span></div>")
-                elif p_fast >= 75:
-                    extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>MCO: {latest_mco:.1f}</b> <span style='color:#dc2626;'>(Dangerously Overextended. High Risk of Pullback/Chop. Do Not Chase.)</span></div>")
-            elif latest_mco <= -70:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Severe Washout. Sellers Exhausted. Look for Bounces.)</span></div>")
-                
         latest_trin = latest.get('TRIN', np.nan)
         if not pd.isna(latest_trin):
-            if latest_trin >= 2.0: 
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Panic Capitulation. Contrarian Bottom Signal.)</span></div>")
-            elif latest_trin <= 0.5: 
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand. Heavy Institutional Buying.)</span></div>")
+            if latest_trin >= 1.5 and score <= 31: 
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Panic Capitulation. Weak regime + heavy selling = Contrarian Bottom Signal.)</span></div>")
+            elif latest_trin <= 0.7 and score >= 51: 
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand. Strong regime + heavy buying = Trend Confirmed.)</span></div>")
+
+        latest_mco = latest.get('MCO', np.nan)
+        if not pd.isna(latest_mco):
+            if latest_mco >= 50:
+                if score <= 31:
+                    extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>(Early Ignition Thrust. Surging momentum from the bottom. Watch for base breakouts.)</span></div>")
+                else:
+                    extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>(Power Trend. Short-term breadth is hot and institutional buying is aggressive.)</span></div>")
+            elif latest_mco <= -50 and score <= 31:
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Deep Washout. Extreme short-term oversold. Look for the turn.)</span></div>")
                 
         vol_ratio = latest.get('Volume_Ratio', np.nan)
         if not pd.isna(vol_ratio):
@@ -508,7 +508,7 @@ with tac_col1:
         latest_mco_chart = plot_df['MCO'].iloc[-1] if 'MCO' in plot_df.columns and not plot_df['MCO'].isna().all() else 0
         mco_color = '#16a34a' if latest_mco_chart >= 0 else '#dc2626'
         st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>McCLELLAN OSCILLATOR (MCO) &nbsp;|&nbsp; LATEST: <span style='color:{mco_color};'>{latest_mco_chart:.1f}</span></div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Short-term momentum of advancing issues. Readings >+50 or <-50 signal extreme overbought/oversold conditions.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Short-term momentum of advancing issues. Readings >+50 or <-50 signal extreme conditions.</div>", unsafe_allow_html=True)
         
         colors_mco = ['#22c55e' if val >= 0 else '#ef4444' for val in plot_df.get('MCO', pd.Series([0]))]
         fig_mco = go.Figure(go.Bar(x=plot_df['Date'], y=plot_df.get('MCO', pd.Series(dtype=float)), marker_color=colors_mco, hovertemplate='MCO: %{y:.1f}<extra></extra>'))
@@ -525,13 +525,13 @@ with tac_col2:
         trin_str = "N/A" if pd.isna(latest_trin_chart) else f"{latest_trin_chart:.2f}"
         
         st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>TRIN (ARMS INDEX) &nbsp;|&nbsp; LATEST: <span style='color:{trin_color};'>{trin_str}</span></div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Contrarian indicator balancing A/D and Volume. <0.5 shows aggressive buying, >2.0 shows panic selling.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Contrarian indicator balancing A/D and Volume. <0.7 shows aggressive buying, >1.5 shows panic selling.</div>", unsafe_allow_html=True)
         
         colors_trin = ['#22c55e' if (pd.notna(val) and val < 1.0) else '#ef4444' for val in plot_df.get('TRIN', pd.Series([1.0]))]
         fig_trin = go.Figure(go.Bar(x=plot_df['Date'], y=plot_df.get('TRIN', pd.Series(dtype=float)), marker_color=colors_trin, hovertemplate='TRIN: %{y:.2f}<extra></extra>'))
         fig_trin.add_hline(y=1.0, line_dash="dash", line_color="#cbd5e1", annotation_text="Neutral (1.0)")
-        fig_trin.add_hline(y=0.5, line_dash="dot", line_color="#22c55e", annotation_text="Demand (<0.5)")
-        fig_trin.add_hline(y=2.0, line_dash="dot", line_color="#ef4444", annotation_text="Panic (>2.0)")
+        fig_trin.add_hline(y=0.7, line_dash="dot", line_color="#22c55e", annotation_text="Demand (<0.7)")
+        fig_trin.add_hline(y=1.5, line_dash="dot", line_color="#ef4444", annotation_text="Panic (>1.5)")
         
         y_max = min(5.0, float(plot_df['TRIN'].dropna().max()) + 0.5) if not plot_df['TRIN'].dropna().empty else 3.0
         fig_trin.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified", yaxis_range=[0, y_max])
