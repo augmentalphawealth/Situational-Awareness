@@ -92,7 +92,15 @@ overall_breadth = df.groupby('Date').agg(
     Total_Universe=('Active_Universe', 'sum'), Advances=('Gainer', 'sum'), Declines=('Loser', 'sum')
 ).reset_index()
 
-intra_df = pd.DataFrame([{"Time": now_ist.strftime("%H:%M"), "Advances": overall_breadth.iloc[-1]['Advances'], "Declines": overall_breadth.iloc[-1]['Declines'], "Date": now_ist.strftime("%Y-%m-%d")}])
+intra_adv = int(overall_breadth.iloc[-1]['Advances'])
+intra_dec = int(overall_breadth.iloc[-1]['Declines'])
+
+# 🔥 NEW FLATLINE/HOLIDAY GUARD TO PREVENT THE 0/0 BUG
+if intra_adv == 0 and intra_dec == 0:
+    print("🛑 ZERO VOLUME / HOLIDAY DETECTED: 0 Advances and 0 Declines. Aborting file save.")
+    sys.exit(0)
+
+intra_df = pd.DataFrame([{"Time": now_ist.strftime("%H:%M"), "Advances": intra_adv, "Declines": intra_dec, "Date": now_ist.strftime("%Y-%m-%d")}])
 intra_df.to_csv("live_intraday_breadth.csv", index=False)
 
 with open("last_sync.txt", "w") as f: f.write(f"Today, {now_ist.strftime('%I:%M %p')} IST")
