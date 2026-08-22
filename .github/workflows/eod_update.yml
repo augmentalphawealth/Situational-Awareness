@@ -3,7 +3,12 @@ name: EOD Update
 on:
   workflow_dispatch:
   schedule:
+    # 09:30 IST morning recovery after Zerodha corporate-action processing
+    - cron: '0 4 * * 1-5'
+      timezone: 'Asia/Kolkata'
+    # 17:00 IST final EOD synchronization
     - cron: '30 11 * * 1-5'
+      timezone: 'Asia/Kolkata'
 
 concurrency:
   group: data-sync
@@ -12,38 +17,61 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  TZ: Asia/Kolkata
+
 jobs:
   update-eod:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
+          cache: pip
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Daily EOD Sync
+      - name: Run EOD Synchronization and Backfill
         env:
           KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
           KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
+          EOD_CRITICAL_SYMBOLS: RELIANCE,HDFCBANK,ICICIBANK,INFY,TCS
         run: |
           python fetch_eod_6yr.py
+
+      - name: Upload recovery logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eod-recovery-logs
+          path: |
+            eod_audits/
+            eod_backups/
+            *.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Commit and Push Changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git diff-index --quiet HEAD || git commit -m "Auto-update: Daily EOD Database"
-          git pull origin main --rebase -X ours || true
-          git push origin main
+          if git diff --cached --quiet; then
+            echo "No database or audit changes to commit."
+            exit 0
+          fi
+          git commit -m "Auto-update: EOD database and recovery audit"
+          git pull --rebase origin main
+          git push origin HEAD:main
