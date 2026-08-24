@@ -35,6 +35,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
@@ -49,6 +50,7 @@ jobs:
       - name: Validate prepared dashboard data
         run: |
           set -euo pipefail
+
           test -s dashboard_data.parquet
           test -s live_intraday.parquet
           test -s live_intraday_breadth.csv
@@ -67,28 +69,89 @@ jobs:
           if missing:
               raise SystemExit(f"Missing columns: {sorted(missing)}")
 
-          df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+          df["Date"] = pd.to_datetime(
+              df["Date"], errors="coerce"
+          ).dt.normalize()
+
           today = pd.Timestamp(datetime.now().date()).normalize()
           rows_today = int((df["Date"] == today).sum())
 
           if rows_today == 0:
-              raise SystemExit(f"dashboard_data.parquet has no rows for {today.date()}")
+              raise SystemExit(
+                  f"dashboard_data.parquet has no rows for {today.date()}"
+              )
 
-          print(f"Validated {len(df)} total rows; {rows_today} rows for today")
+          print(
+              f"Validated {len(df)} total rows; "
+              f"{rows_today} rows for today"
+          )
+          PY
+
+      - name: Validate aggregate market-regime data
+        run: |
+          set -euo pipefail
+
+          test -s historical_breadth_regime_6yr.csv
+
+          python - <<'PY'
+          import pandas as pd
+
+          path = "historical_breadth_regime_6yr.csv"
+          df = pd.read_csv(path)
+
+          if "Date" not in df.columns:
+              raise SystemExit("Aggregate file has no Date column")
+
+          df["Date"] = pd.to_datetime(
+              df["Date"], errors="coerce"
+          ).dt.normalize()
+
+          today = pd.Timestamp.now().normalize()
+          today_rows = df[df["Date"] == today]
+
+          if today_rows.empty:
+              raise SystemExit(
+                  f"No aggregate row exists for {today.date()}"
+              )
+
+          required = {
+              "Date",
+              "Advances",
+              "Declines",
+              "Total_Universe",
+              "Pct_Above_20_EMA",
+              "Pct_Above_50_EMA",
+              "Pct_Above_200_EMA",
+          }
+
+          missing = required.difference(df.columns)
+          if missing:
+              raise SystemExit(
+                  f"Missing aggregate columns: {sorted(missing)}"
+              )
+
+          print(f"Aggregate row found for {today.date()}")
+          print(today_rows.tail(1).to_string(index=False))
           PY
 
       - name: Commit and push generated data
         run: |
           set -euo pipefail
+
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-          git add dashboard_data.parquet live_intraday.parquet live_intraday_breadth.csv last_sync.txt
+          git add \
+            historical_breadth_regime_6yr.csv \
+            dashboard_data.parquet \
+            live_intraday.parquet \
+            live_intraday_breadth.csv \
+            last_sync.txt
 
           if git diff --cached --quiet; then
             echo "No generated data changes to commit."
             exit 0
           fi
 
-          git commit -m "Auto-update: intraday prepared data"
+          git commit -m "Auto-update: intraday aggregate and stock data"
           git push origin HEAD:main
