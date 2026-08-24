@@ -252,6 +252,11 @@ if selected_date == today and live_available:
     df_filtered = pd.concat([df_filtered, current], ignore_index=True, sort=False)
 
 df_10d = df_filtered.tail(10).copy()
+df_10d["Date"] = pd.to_datetime(
+    df_10d["Date"],
+    errors="coerce"
+).dt.normalize()
+df_10d = df_10d.dropna(subset=["Date"])
 df_10d["Date_Str"] = df_10d["Date"].dt.strftime("%d %b")
 
 
