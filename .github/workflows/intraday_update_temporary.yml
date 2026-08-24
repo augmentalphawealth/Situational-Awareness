@@ -1,0 +1,130 @@
+name: Temporary Intraday Update
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub Actions cron uses UTC.
+    # 03:00-10:45 UTC is approximately 08:30-16:15 IST.
+    - cron: "*/15 3-10 * * 1-5"
+
+concurrency:
+  group: temporary-intraday-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Kolkata
+
+jobs:
+  update-temporary-intraday:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run temporary intraday engine
+        env:
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -u intraday_engine.py
+
+      - name: Validate temporary outputs
+        run: |
+          set -euo pipefail
+
+          test -s intraday_tmp/intraday_snapshot.parquet
+          test -s intraday_tmp/intraday_stock_metrics.parquet
+          test -s intraday_tmp/intraday_market_metrics.json
+          test -s intraday_tmp/intraday_status.json
+
+          python - <<'PY'
+          import json
+          from datetime import datetime
+          from pathlib import Path
+          import pandas as pd
+
+          temp = Path("intraday_tmp")
+          snapshot = pd.read_parquet(temp / "intraday_snapshot.parquet")
+          stock = pd.read_parquet(temp / "intraday_stock_metrics.parquet")
+          market = json.loads((temp / "intraday_market_metrics.json").read_text())
+          status = json.loads((temp / "intraday_status.json").read_text())
+
+          today = pd.Timestamp(datetime.now().date()).normalize()
+
+          if snapshot.empty:
+              raise SystemExit("Intraday snapshot is empty")
+          if stock.empty:
+              raise SystemExit("Intraday stock metrics are empty")
+
+          snapshot["Date"] = pd.to_datetime(snapshot["Date"], errors="coerce").dt.normalize()
+          stock["Date"] = pd.to_datetime(stock["Date"], errors="coerce").dt.normalize()
+
+          if not (snapshot["Date"] == today).all():
+              raise SystemExit("Snapshot contains a non-current date")
+          if not (stock["Date"] == today).all():
+              raise SystemExit("Stock metrics contain a non-current date")
+
+          required_market = {
+              "Date",
+              "Total_Universe",
+              "Advances",
+              "Declines",
+              "Pct_Above_20_EMA",
+              "Pct_Above_50_EMA",
+              "Pct_Above_200_EMA",
+              "Volume_Ratio",
+              "TRIN",
+              "Composite_Score",
+          }
+          missing = required_market.difference(market)
+          if missing:
+              raise SystemExit(f"Market metrics missing keys: {sorted(missing)}")
+
+          if status.get("status") != "ok":
+              raise SystemExit("Intraday status is not ok")
+
+          print(f"Validated {len(snapshot)} live quotes")
+          print(f"Validated {len(stock)} current-day stock metrics")
+          print(f"Composite Score: {market['Composite_Score']}")
+          print(f"MCO: {market.get('MCO')}")
+          print(f"TRIN: {market['TRIN']}")
+          PY
+
+      - name: Publish only temporary intraday outputs
+        run: |
+          set -euo pipefail
+
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          # Publish only the temporary directory.
+          # Permanent EOD files are deliberately excluded.
+          git add -f intraday_tmp/
+
+          if git diff --cached --quiet; then
+            echo "No temporary intraday changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Auto-update: temporary intraday metrics"
+          git push origin HEAD:main
