@@ -44,12 +44,9 @@ def connect_to_kite() -> KiteConnect:
         fail("KITE_API_KEY is missing.")
     if not ACCESS_TOKEN:
         fail("KITE_ACCESS_TOKEN is missing.")
-    try:
-        kite = KiteConnect(api_key=API_KEY)
-        kite.set_access_token(ACCESS_TOKEN)
-        return kite
-    except Exception as exc:
-        fail(f"Could not initialize Kite connection: {type(exc).__name__}: {exc}")
+    kite = KiteConnect(api_key=API_KEY)
+    kite.set_access_token(ACCESS_TOKEN)
+    return kite
 
 
 def market_is_open_today(kite: KiteConnect) -> bool:
@@ -60,11 +57,7 @@ def market_is_open_today(kite: KiteConnect) -> bool:
         if last_trade_time is None:
             print("⚠️ NIFTY 50 last_trade_time unavailable; continuing.")
             return True
-        trade_date = (
-            last_trade_time.date()
-            if hasattr(last_trade_time, "date")
-            else pd.Timestamp(last_trade_time).date()
-        )
+        trade_date = last_trade_time.date() if hasattr(last_trade_time, "date") else pd.Timestamp(last_trade_time).date()
         if trade_date != TODAY.date():
             print(f"🛑 Market holiday guard: last trade was {trade_date}.")
             return False
@@ -120,31 +113,25 @@ def fetch_quotes(kite: KiteConnect, symbols: list[str]) -> pd.DataFrame:
     live = live.dropna(subset=["Symbol", "Close"])
     live["Date"] = pd.to_datetime(live["Date"]).dt.normalize()
     live = live.drop_duplicates(["Date", "Symbol"], keep="last")
-    if live.empty:
-        fail("All quote rows became invalid after cleaning.")
     return live
 
 
 def prepare_stock_data(historical: pd.DataFrame, live: pd.DataFrame) -> pd.DataFrame:
+    historical = historical.copy()
     historical["Date"] = pd.to_datetime(historical["Date"], errors="coerce").dt.normalize()
     historical["Symbol"] = historical["Symbol"].astype(str).str.strip()
     historical = historical.dropna(subset=["Date", "Symbol"])
     historical_without_today = historical[historical["Date"] != TODAY].copy()
 
     combined = pd.concat([historical_without_today, live], ignore_index=True, sort=False)
-    combined = (
-        combined.sort_values(["Symbol", "Date"])
-        .drop_duplicates(["Date", "Symbol"], keep="last")
-        .reset_index(drop=True)
-    )
-
+    combined = combined.sort_values(["Symbol", "Date"]).drop_duplicates(["Date", "Symbol"], keep="last").reset_index(drop=True)
     grouped = combined.groupby("Symbol", group_keys=False)
+
     combined["History_Days"] = grouped.cumcount() + 1
     combined["Prior_History_Days"] = combined["History_Days"] - 1
     combined["Daily_Turnover"] = combined["Close"] * combined["Volume"]
-    combined["Prior_Turnover_20D_Avg"] = grouped["Daily_Turnover"].transform(
-        lambda values: values.shift(1).rolling(20, min_periods=1).mean()
-    )
+    combined["Prior_Turnover_20D_Avg"] = grouped["Daily_Turnover"].transform(lambda values: values.shift(1).rolling(20, min_periods=1).mean())
+
     mature = (combined["Prior_History_Days"] >= 20) & (combined["Prior_Turnover_20D_Avg"] >= 50_000_000)
     new = (combined["Prior_History_Days"] >= 1) & (combined["Prior_History_Days"] < 20)
     combined["Active_Universe"] = (mature | new) & (combined["Volume"] > 0)
@@ -158,17 +145,39 @@ def prepare_stock_data(historical: pd.DataFrame, live: pd.DataFrame) -> pd.DataF
         combined[f"EMA_{period}"] = ema
         combined[f"Above_{period}_EMA"] = combined["Close"] > ema
 
+    combined["Up_4_Pct"] = combined["Daily_Pct"] >= 4
+    combined["Down_4_Pct"] = combined["Daily_Pct"] <= -4
+    combined["Pct_1M"] = grouped["Close"].pct_change(21) * 100
+    combined["Up_25_1M"] = combined["Pct_1M"] >= 25
+    combined["Down_25_1M"] = combined["Pct_1M"] <= -25
+
+    for period in [20, 50, 200]:
+        combined[f"Above_{period}_EMA"] = combined[f"Above_{period}_EMA"].fillna(False)
+
     return combined
 
 
-def latest_value(frame: pd.DataFrame, column: str, default: float = np.nan) -> float:
-    if column not in frame.columns:
+def previous_row(aggregate: pd.DataFrame, column: str, default=np.nan):
+    if aggregate.empty or column not in aggregate.columns:
         return default
-    values = pd.to_numeric(frame[column], errors="coerce").dropna()
-    return float(values.iloc[-1]) if not values.empty else default
+    values = aggregate[column].dropna()
+    return values.iloc[-1] if not values.empty else default
 
 
-def create_aggregate_row(stock_data: pd.DataFrame, previous_aggregate: pd.DataFrame) -> pd.DataFrame:
+def calculate_mco(aggregate_without_today: pd.DataFrame, advances: int, declines: int) -> float:
+    if advances + declines == 0:
+        return np.nan
+    ad_diff = advances - declines
+    prior = aggregate_without_today.copy()
+    if not prior.empty and {"Advances", "Declines"}.issubset(prior.columns):
+        prior_diff = pd.to_numeric(prior["Advances"], errors="coerce").fillna(0) - pd.to_numeric(prior["Declines"], errors="coerce").fillna(0)
+        series = pd.concat([prior_diff, pd.Series([ad_diff])], ignore_index=True)
+    else:
+        series = pd.Series([ad_diff])
+    return float(series.ewm(span=19, adjust=False).mean().iloc[-1] - series.ewm(span=39, adjust=False).mean().iloc[-1])
+
+
+def create_aggregate_row(stock_data: pd.DataFrame, previous: pd.DataFrame) -> pd.DataFrame:
     today = stock_data[stock_data["Date"] == TODAY].copy()
     active = today[today["Active_Universe"] == True].copy()
     if active.empty:
@@ -176,7 +185,7 @@ def create_aggregate_row(stock_data: pd.DataFrame, previous_aggregate: pd.DataFr
 
     advances = int(active["Gainer"].sum())
     declines = int(active["Loser"].sum())
-    total = len(active)
+    total = int(len(active))
     unchanged = max(total - advances - declines, 0)
 
     row = {
@@ -185,33 +194,55 @@ def create_aggregate_row(stock_data: pd.DataFrame, previous_aggregate: pd.DataFr
         "Advances": advances,
         "Declines": declines,
         "Unchanged": unchanged,
+        "Above_20_EMA": int(active["Above_20_EMA"].sum()),
+        "Above_50_EMA": int(active["Above_50_EMA"].sum()),
+        "Above_200_EMA": int(active["Above_200_EMA"].sum()),
+        "Pct_Above_20_EMA": round(float(active["Above_20_EMA"].mean() * 100), 2),
+        "Pct_Above_50_EMA": round(float(active["Above_50_EMA"].mean() * 100), 2),
+        "Pct_Above_200_EMA": round(float(active["Above_200_EMA"].mean() * 100), 2),
+        "Up_4_Count": int(active["Up_4_Pct"].sum()),
+        "Down_4_Count": int(active["Down_4_Pct"].sum()),
+        "Up_25_1M_Count": int(active["Up_25_1M"].sum()),
+        "Down_25_1M_Count": int(active["Down_25_1M"].sum()),
     }
 
-    for period in [20, 50, 200]:
-        column = f"Above_{period}_EMA"
-        row[f"Pct_Above_{period}_EMA"] = round(float(active[column].mean() * 100), 2)
+    up_volume = float(active.loc[active["Gainer"], "Volume"].sum())
+    down_volume = float(active.loc[active["Loser"], "Volume"].sum())
+    row["Total_Up_Volume"] = up_volume
+    row["Total_Down_Volume"] = down_volume
+    row["Volume_Ratio"] = round(up_volume / down_volume, 4) if down_volume > 0 else np.nan
+    row["TRIN"] = round((advances / declines) / (up_volume / down_volume), 4) if declines > 0 and down_volume > 0 and up_volume > 0 else np.nan
+    row["AD_Spread"] = advances - declines
+    row["MCO"] = calculate_mco(previous, advances, declines)
 
-    advancing_volume = active.loc[active["Gainer"], "Volume"].sum()
-    declining_volume = active.loc[active["Loser"], "Volume"].sum()
-    row["Volume_Ratio"] = round(float(advancing_volume / declining_volume), 4) if declining_volume > 0 else np.nan
+    row["New_52W_Highs"] = np.nan
+    row["New_52W_Lows"] = np.nan
     row["Net_52W_High_Low"] = np.nan
     row["IPO_New_Highs"] = np.nan
-    row["MCO"] = np.nan
-    row["TRIN"] = round(float((advances / declines) / (advancing_volume / declining_volume)), 4) if declines > 0 and declining_volume > 0 else np.nan
+    row["Rolling_3D_Up_4"] = int(previous["Rolling_3D_Up_4"].tail(2).sum() + row["Up_4_Count"]) if "Rolling_3D_Up_4" in previous.columns else row["Up_4_Count"]
+    row["Rolling_3D_Down_4"] = int(previous["Rolling_3D_Down_4"].tail(2).sum() + row["Down_4_Count"]) if "Rolling_3D_Down_4" in previous.columns else row["Down_4_Count"]
 
-    # These metrics require future sessions or existing EOD-specific logic.
-    # Carrying the previous value is safer than presenting a false intraday calculation.
-    for column in ["Composite_Score", "T3_Wins", "T3_Breakouts", "Up_25_1M_Count", "Down_25_1M_Count", "Rolling_3D_Up_4", "Rolling_3D_Down_4"]:
-        if column in previous_aggregate.columns and not previous_aggregate.empty:
-            row[column] = previous_aggregate.iloc[-1].get(column, np.nan)
-        else:
-            row[column] = np.nan
+    # A T+3 result is only final after three later sessions. Keep the last completed value.
+    row["T3_Breakouts"] = int(active["Up_4_Pct"].sum())
+    row["T3_Wins"] = previous_row(previous, "T3_Wins", 0)
+
+    # Composite score uses current breadth inputs and the prior EOD cohort fields.
+    score = 0
+    score += 25 if row["Pct_Above_20_EMA"] >= 50 else 0
+    score += 25 if row["Pct_Above_50_EMA"] >= 50 else 0
+    score += 25 if row["Pct_Above_200_EMA"] >= 50 else 0
+    score += 25 if advances > declines else 0
+    row["Composite_Score"] = score
+
+    for column in previous.columns:
+        if column not in row:
+            row[column] = previous_row(previous, column, np.nan)
 
     return pd.DataFrame([row])
 
 
 def main() -> None:
-    print("Connecting to Zerodha API for intraday snapshot...")
+    print("Connecting to Zerodha API for live aggregate snapshot...")
     if not CACHE_FILE.exists():
         fail(f"Historical cache missing: {CACHE_FILE.name}")
 
@@ -222,9 +253,6 @@ def main() -> None:
         fail(f"Historical cache missing columns: {sorted(missing)}")
 
     symbols = sorted(historical["Symbol"].dropna().astype(str).str.strip().unique())
-    if not symbols:
-        fail("No symbols found in historical cache.")
-
     kite = connect_to_kite()
     if not market_is_open_today(kite):
         return
@@ -232,46 +260,39 @@ def main() -> None:
     live = fetch_quotes(kite, symbols)
     prepared = prepare_stock_data(historical, live)
 
-    if AGGREGATE_FILE.exists():
-        aggregate = pd.read_csv(AGGREGATE_FILE)
-    else:
-        aggregate = pd.DataFrame()
-
+    aggregate = pd.read_csv(AGGREGATE_FILE) if AGGREGATE_FILE.exists() else pd.DataFrame()
     if not aggregate.empty and "Date" in aggregate.columns:
         aggregate["Date"] = pd.to_datetime(aggregate["Date"], errors="coerce").dt.normalize()
         aggregate = aggregate.dropna(subset=["Date"])
-        previous = aggregate[aggregate["Date"] != TODAY].sort_values("Date")
+        previous = aggregate[aggregate["Date"] != TODAY].sort_values("Date").reset_index(drop=True)
     else:
-        previous = aggregate
+        previous = pd.DataFrame()
 
-    aggregate_row = create_aggregate_row(prepared, previous)
-    aggregate_without_today = aggregate[aggregate["Date"] != TODAY].copy() if not aggregate.empty and "Date" in aggregate.columns else aggregate
-    aggregate_output = pd.concat([aggregate_without_today, aggregate_row], ignore_index=True, sort=False)
-    aggregate_output = aggregate_output.sort_values("Date").drop_duplicates("Date", keep="last")
-
+    today_row = create_aggregate_row(prepared, previous)
+    output = pd.concat([previous, today_row], ignore_index=True, sort=False).sort_values("Date").drop_duplicates("Date", keep="last")
     breadth = pd.DataFrame([{
         "Time": NOW_IST.strftime("%H:%M"),
-        "Advances": int(aggregate_row.iloc[0]["Advances"]),
-        "Declines": int(aggregate_row.iloc[0]["Declines"]),
-        "Unchanged": int(aggregate_row.iloc[0]["Unchanged"]),
-        "Total_Universe": int(aggregate_row.iloc[0]["Total_Universe"]),
+        "Advances": int(today_row.iloc[0]["Advances"]),
+        "Declines": int(today_row.iloc[0]["Declines"]),
+        "Unchanged": int(today_row.iloc[0]["Unchanged"]),
+        "Total_Universe": int(today_row.iloc[0]["Total_Universe"]),
         "Date": NOW_IST.strftime("%Y-%m-%d"),
     }])
 
-    if int(breadth.iloc[0]["Advances"]) == 0 and int(breadth.iloc[0]["Declines"]) == 0:
+    if breadth.iloc[0]["Advances"] == 0 and breadth.iloc[0]["Declines"] == 0:
         print("🛑 Zero advances and declines. No files changed.")
         return
 
     atomic_write(live, LIVE_FILE)
     atomic_write(prepared, DASHBOARD_FILE)
-    atomic_write(aggregate_output, AGGREGATE_FILE, csv=True)
+    atomic_write(output, AGGREGATE_FILE, csv=True)
     atomic_write(breadth, BREADTH_FILE, csv=True)
     SYNC_FILE.write_text(f"Today, {NOW_IST.strftime('%I:%M %p')} IST\n", encoding="utf-8")
 
     print(f"✅ Live rows written: {len(live)}")
     print(f"✅ Prepared dashboard rows written: {len(prepared)}")
-    print(f"✅ Aggregate rows written: {len(aggregate_output)}")
-    print(f"✅ Breadth: {int(breadth.iloc[0]['Advances'])} advances, {int(breadth.iloc[0]['Declines'])} declines")
+    print(f"✅ Aggregate row written with Composite Score={today_row.iloc[0]['Composite_Score']}")
+    print(f"✅ MCO={today_row.iloc[0]['MCO']} TRIN={today_row.iloc[0]['TRIN']}")
 
 
 if __name__ == "__main__":
