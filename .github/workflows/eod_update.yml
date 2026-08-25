@@ -3,81 +3,42 @@ name: EOD Update
 on:
   workflow_dispatch:
   schedule:
-    # 09:30 IST morning recovery run
-    - cron: '30 9 * * 1-5'
-      timezone: 'Asia/Kolkata'
-    # 17:00 IST final EOD run
-    - cron: '0 17 * * 1-5'
-      timezone: 'Asia/Kolkata'
-    # Weekend recovery: Saturday 09:30 IST
-    - cron: '30 9 * * 6'
-      timezone: 'Asia/Kolkata'
-    # Sunday recovery: Sunday 09:30 IST
-    - cron: '30 9 * * 0'
-      timezone: 'Asia/Kolkata'
-
-concurrency:
-  group: data-sync
-  cancel-in-progress: false
-
-permissions:
-  contents: write
-
-env:
-  TZ: Asia/Kolkata
+    - cron: '0 5,17 * * 1-5'
 
 jobs:
   update-eod:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-
+    timeout-minutes: 90
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
-          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: pip
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run EOD Synchronization and Backfill
+      - name: Run EOD fetch
+        run: |
+          python fetch_eod_6yr.py
         env:
           KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
           KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
           EOD_CRITICAL_SYMBOLS: RELIANCE,HDFCBANK,ICICIBANK,INFY,TCS
-        run: |
-          python fetch_eod_6yr.py
 
-      - name: Upload recovery logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: eod-recovery-logs
-          path: |
-            eod_audits/
-            eod_backups/
-            *.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Commit and Push Changes
+      - name: Commit and push EOD updates
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No database or audit changes to commit."
-            exit 0
-          fi
-          git commit -m "Auto-update: EOD database and recovery audit"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git config --global user.name "github-actions"
+          git config --global user.email "action@github.com"
+          git add historical_breadth_regime_6yr.csv
+          git add trailing_cache.parquet
+          git add nse_6yr_historical.parquet
+          git commit -m "Auto-update: EOD historical data" || echo "No changes to commit"
+          git push
