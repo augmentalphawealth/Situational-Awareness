@@ -331,6 +331,9 @@ def main():
             f"latest_market_date={latest_market_date.date()}; "
             f"missing_dates={[date.date().isoformat() for date in missing_dates]}"
         )
+        # NEW: Add backfill progress estimation
+        print(f"Backfill needed: {len(expected_symbols)} symbols × {len(missing_dates)} dates = {len(expected_symbols) * len(missing_dates)} API calls")
+        print(f"Estimated time: {len(expected_symbols) * len(missing_dates) * (HISTORY_SLEEP_SECONDS + 2) / 60:.1f} minutes")
 
         backfill_rows = []
         backfill_failures = []
