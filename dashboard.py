@@ -6,6 +6,7 @@ import requests
 import time
 import os
 import datetime
+import json
 from io import StringIO, BytesIO
 from zoneinfo import ZoneInfo
 
@@ -25,6 +26,14 @@ st.markdown("""
     .stButton>button { border-radius: 6px; font-weight: 600; font-size: 12px; padding: 0.3rem 0.5rem; }
     div[data-testid="stDateInput"] input { padding: 0.3rem; font-size: 13px; text-align: center; }
     div[data-testid="stDateInput"] label { display: none; }
+    .status-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+    .status-live { background-color: #dcfce7; color: #166534; }
+    .status-stale { background-color: #fee2e2; color: #991b1b; }
+    .status-na { background-color: #f1f5f9; color: #475569; }
+    .status-banner { padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; margin-top: 6px; }
+    .status-banner-live { background-color: #dcfce7; color: #166534; }
+    .status-banner-stale { background-color: #ffedd5; color: #9a3412; }
+    .status-banner-na { background-color: #fee2e2; color: #991b1b; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -35,6 +44,12 @@ BRANCH = "main"
 HISTORICAL_FILE = "historical_breadth_regime_6yr.csv"
 INTRADAY_FILE = "live_intraday_breadth.csv"
 SYNC_FILE = "last_sync.txt"
+
+# Intraday temporary files
+INTRADAY_STATUS_PATH = "intraday_tmp/intraday_status.json"
+INTRADAY_METRICS_PATH = "intraday_tmp/intraday_market_metrics.json"
+
+STALE_THRESHOLD_MINUTES = 15
 
 def safe_int(val):
     try:
@@ -183,6 +198,63 @@ def step_next_day():
     if len(curr_idx) > 0 and curr_idx[0] < len(unique_dates) - 1:
         st.session_state.analysis_date = pd.to_datetime(unique_dates[curr_idx[0] + 1])
 
+# ---------------------------
+# Intraday status & staleness
+# ---------------------------
+
+def parse_intraday_status():
+    """
+    Returns:
+        intraday_ok: bool
+        last_update_dt: datetime or None
+        staleness_minutes: float or None
+        status_text: str
+        status_class: 'live' | 'stale' | 'na'
+        banner_text: str
+        banner_class: 'live' | 'stale' | 'na'
+    """
+    status_text = read_remote_file(INTRADAY_STATUS_PATH)
+    if not status_text:
+        return False, None, None, "Intraday data unavailable", "na", "INTRADAY DATA UNAVAILABLE", "na"
+    try:
+        status_obj = json.loads(status_text)
+    except Exception:
+        return False, None, None, "Intraday status parse error", "na", "INTRADAY DATA UNAVAILABLE", "na"
+    
+    updated_at_str = status_obj.get("updated_at")
+    if not updated_at_str:
+        return False, None, None, "Intraday data unavailable", "na", "INTRADAY DATA UNAVAILABLE", "na"
+    
+    try:
+        # Format: 2026-08-25T16:47:59.492912+05:30
+        last_update_dt = datetime.datetime.fromisoformat(updated_at_str)
+    except Exception:
+        return False, None, None, "Intraday data unavailable", "na", "INTRADAY DATA UNAVAILABLE", "na"
+    
+    now_ist = datetime.datetime.now(ist)
+    # Ensure both are comparable; last_update_dt is already offset-aware
+    age_td = now_ist - last_update_dt
+    age_minutes = age_td.total_seconds() / 60.0
+    
+    if age_minutes <= STALE_THRESHOLD_MINUTES:
+        status_class = "live"
+        banner_class = "live"
+        status_text_display = f"LIVE — updated {last_update_dt.strftime('%H:%M')} IST"
+        banner_text = f"INTRADAY DATA LIVE — last successful update {last_update_dt.strftime('%H:%M')} IST"
+    else:
+        status_class = "stale"
+        banner_class = "stale"
+        status_text_display = f"STALE — last update {last_update_dt.strftime('%H:%M')} IST"
+        banner_text = f"INTRADAY DATA STALE — last successful update {last_update_dt.strftime('%H:%M')} IST (>{STALE_THRESHOLD_MINUTES} min old)"
+    
+    return True, last_update_dt, age_minutes, status_text_display, status_class, banner_text, banner_class
+
+intraday_ok, intraday_update_dt, intraday_age_min, intraday_status_text, intraday_status_class, intraday_banner_text, intraday_banner_class = parse_intraday_status()
+
+# ---------------------------
+# Header & controls
+# ---------------------------
+
 head_col1, head_spacer, head_col2, head_col3 = st.columns([3.0, 0.5, 2.0, 1.2])
 with head_col1:
     st.markdown("<h2 style='margin-top: 10px; margin-bottom: 0px; font-weight: 800; color: #0f172a; white-space: nowrap; font-size: 24px;'>🛡️ SITUATIONAL AWARENESS</h2>", unsafe_allow_html=True)
@@ -197,8 +269,14 @@ with head_col2:
             st.session_state.analysis_date = pd.to_datetime(selected_date)
             st.rerun()
     with nav3: st.button("Next ▶", on_click=step_next_day, use_container_width=True)
+
 with head_col3:
-    display_sync = last_sync_display if st.session_state.analysis_date == max_date else "Historical View"
+    # Right-aligned status line
+    if st.session_state.analysis_date == max_date and intraday_ok:
+        display_sync = intraday_status_text
+    else:
+        display_sync = last_sync_display if st.session_state.analysis_date == max_date else "Historical View"
+    
     st.markdown(f"<div style='text-align: right; font-size: 11px; font-weight: 600; color: #64748b; margin-top: 2px; margin-bottom: 3px;'>Last Sync: {display_sync}</div>", unsafe_allow_html=True)
     
     if st.session_state.sync_in_progress:
@@ -227,6 +305,13 @@ with head_col3:
                 st.session_state.sync_start_time = time.time()
                 st.session_state.pre_sync_time = last_sync_display
                 st.rerun()
+
+# Status banner for intraday data (only on latest date)
+if st.session_state.analysis_date == max_date:
+    if intraday_ok:
+        st.markdown(f"<div class='status-banner status-banner-{intraday_banner_class}'>{intraday_banner_text}</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='status-banner status-banner-na'>INTRADAY DATA UNAVAILABLE — using latest EOD snapshot only</div>", unsafe_allow_html=True)
 
 df_filtered = df_agg[df_agg['Date'] <= st.session_state.analysis_date].copy()
 if df_filtered.empty:
@@ -257,8 +342,17 @@ else:
     action_zone, score_color = "CAPITULATION WATCH", "#991b1b"
     tacs = {"asset": "CASH", "sizing": "0% (Pure Cash)", "risk": "Sit on hands", "profit": "Build watchlists; wait for a bounce"}
 
+# ---------------------------
+# 10-day health trend (fixed date handling & score bar)
+# ---------------------------
+
 df_10d = df_filtered.tail(10).copy()
+df_10d['Date'] = pd.to_datetime(df_10d['Date'], errors='coerce')
+df_10d = df_10d.dropna(subset=['Date'])
+df_10d = df_10d.sort_values('Date').reset_index(drop=True)
 df_10d['Date_Str'] = df_10d['Date'].dt.strftime('%d %b')
+
+df_10d['Composite_Score'] = pd.to_numeric(df_10d['Composite_Score'], errors='coerce').fillna(0)
 
 def get_bar_color(val):
     if val >= 71: return "#22c55e"
@@ -289,7 +383,7 @@ with st.container(border=True):
         ))
         fig_m1.update_layout(height=120, margin=dict(l=10, r=10, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
         fig_m1.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
-        fig_m1.update_yaxes(visible=False, range=[0, 115]) 
+        fig_m1.update_yaxes(visible=False, range=[0, 115], fixedrange=True) 
         st.plotly_chart(fig_m1, use_container_width=True, config={'displayModeBar': False})
     
     st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
@@ -459,6 +553,12 @@ with tf_col2: timeframe = st.radio("Chart Horizon:", ["1 Month", "3 Months", "6 
 
 days_map = {"1 Month": 21, "3 Months": 63, "6 Months": 126, "1 Year": 252, "3 Years": 756, "6 Years": len(df_filtered)}
 plot_df = df_filtered.tail(days_map.get(timeframe, 126)).copy()
+
+# Ensure Date is proper datetime and sorted
+plot_df['Date'] = pd.to_datetime(plot_df['Date'], errors='coerce')
+plot_df = plot_df.dropna(subset=['Date'])
+plot_df = plot_df.sort_values('Date').reset_index(drop=True)
+
 plot_df['Chart_Date_Str'] = plot_df['Date'].apply(lambda x: f"{x.day} {x.strftime('%B')[:3]}")
 
 # SECTION 1: UNIVERSE EMA BREADTH
