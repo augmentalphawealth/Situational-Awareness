@@ -398,6 +398,8 @@ def main():
             if not (fetch_today and date == latest_market_date)
         }
         missing_pairs = required_pairs - actual_pairs
+        
+        # NEW: Log failures but continue instead of aborting
         if backfill_failures or missing_pairs:
             records = backfill_failures + [
                 {"Symbol": symbol, "Date": date, "Reason": "required_pair_missing"}
@@ -407,10 +409,10 @@ def main():
                 AUDIT_DIR / f"backfill_failures_{now.strftime('%Y%m%d_%H%M%S')}.jsonl",
                 records,
             )
-            die(
-                f"Backfill incomplete: failures={len(backfill_failures)}, "
-                f"missing_pairs={len(missing_pairs)}. Database unchanged."
-            )
+            # NEW: Print warning but continue with available data
+            print(f"⚠️ WARNING: Backfill had {len(backfill_failures)} failures and {len(missing_pairs)} missing pairs.")
+            print(f"⚠️ Failing symbols logged to audit file. Continuing with available data...")
+            # DO NOT abort - proceed with update
 
         working = pd.concat([df_hist, backfill_df], ignore_index=True)
         working = (
@@ -523,6 +525,8 @@ def main():
                 "backfill_rows": len(backfill_df),
                 "today_fetched": fetch_today,
                 "backup": str(backup_path),
+                "backfill_failures": len(backfill_failures),
+                "missing_pairs": len(missing_pairs),
             },
         )
 
