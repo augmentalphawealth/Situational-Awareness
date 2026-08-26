@@ -85,7 +85,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
-            historical_breadth_regime_6yr.csv \
+            live_intraday_aggregate.csv \
             trailing_cache.parquet \
             live_intraday.parquet \
             dashboard_data.parquet \
