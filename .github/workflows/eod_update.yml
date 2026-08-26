@@ -3,42 +3,85 @@ name: EOD Update
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 5,17 * * 1-5'
+    - cron: "0 5,17 * * 1-5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-data-write
+  cancel-in-progress: false
 
 jobs:
   update-eod:
+    name: Fetch and analyse EOD market data
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run EOD fetch
+      - name: Verify Kite token is available
+        env:
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
         run: |
-          python fetch_eod_6yr.py
+          set -euo pipefail
+
+          if [ -z "${KITE_API_KEY}" ]; then
+            echo "❌ KITE_API_KEY is missing."
+            exit 1
+          fi
+
+          if [ -z "${KITE_ACCESS_TOKEN}" ]; then
+            echo "❌ KITE_ACCESS_TOKEN is missing."
+            exit 1
+          fi
+
+          echo "✅ Kite credentials are available."
+
+      - name: Run EOD fetch
         env:
           KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
           KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
           EOD_CRITICAL_SYMBOLS: RELIANCE,HDFCBANK,ICICIBANK,INFY,TCS
+        run: |
+          set -euo pipefail
+          python -u fetch_eod_6yr.py
 
       - name: Commit and push EOD updates
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "action@github.com"
-          git add historical_breadth_regime_6yr.csv
-          git add trailing_cache.parquet
-          git add nse_6yr_historical.parquet
-          git commit -m "Auto-update: EOD historical data" || echo "No changes to commit"
-          git push
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            historical_breadth_regime_6yr.csv \
+            trailing_cache.parquet \
+            nse_6yr_historical.parquet \
+            eod_audits
+
+          if git diff --cached --quiet; then
+            echo "No EOD data changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Auto-update: EOD historical data"
+          git push origin HEAD:main
