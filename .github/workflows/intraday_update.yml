@@ -5,7 +5,7 @@ on:
 
   schedule:
     # GitHub Actions cron uses UTC.
-    # 03:45–10:00 UTC = 09:15 AM–03:30 PM IST (NSE cash-market hours).
+    # 03:45–10:00 UTC = 09:15 AM–03:30 PM IST.
     # Runs every 15 minutes on Monday–Friday.
     - cron: "*/15 3-10 * * 1-5"
 
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: intraday-update
+  group: market-data-write
   cancel-in-progress: false
 
 jobs:
@@ -61,7 +61,7 @@ jobs:
 
           if [ -z "${KITE_ACCESS_TOKEN}" ]; then
             echo "❌ KITE_ACCESS_TOKEN is missing."
-            echo "Run Daily Token Rotation first, or check that update_kite_token.py updates the KITE_ACCESS_TOKEN GitHub Actions secret."
+            echo "Run Daily Token Rotation first, or verify the KITE_ACCESS_TOKEN Actions secret."
             exit 1
           fi
 
@@ -72,11 +72,12 @@ jobs:
           KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
           KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
           KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
+          INTRADAY_CRITICAL_SYMBOLS: RELIANCE,HDFCBANK,ICICIBANK,INFY,TCS
         run: |
           set -euo pipefail
           python -u analyze_intraday_replacement.py
 
-      - name: Commit updated intraday files
+      - name: Commit and push intraday updates
         run: |
           set -euo pipefail
 
@@ -86,8 +87,11 @@ jobs:
           git add \
             historical_breadth_regime_6yr.csv \
             trailing_cache.parquet \
+            live_intraday.parquet \
+            dashboard_data.parquet \
             live_intraday_breadth.csv \
-            last_sync.txt
+            last_sync.txt \
+            intraday_audits
 
           if git diff --cached --quiet; then
             echo "No intraday data changes to commit."
