@@ -33,8 +33,11 @@ REPO_NAME = "Situational-Awareness"
 BRANCH = "main"
 
 HISTORICAL_FILE = "historical_breadth_regime_6yr.csv"
+LIVE_AGGREGATE_FILE = "live_intraday_aggregate.csv"
 INTRADAY_FILE = "live_intraday_breadth.csv"
 SYNC_FILE = "last_sync.txt"
+
+LIVE_FRESHNESS_MINUTES = 30
 
 def safe_int(val):
     try:
@@ -86,15 +89,105 @@ def load_intraday_time():
     except Exception: pass
     return pd.DataFrame()
 
-df_live = load_intraday_time()
+def load_remote_csv(path):
+    try:
+        csv_text = read_remote_file(path)
+        if not csv_text:
+            return pd.DataFrame()
+
+        df = pd.read_csv(StringIO(csv_text))
+
+        if df.empty or "Date" not in df.columns:
+            return pd.DataFrame()
+
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+
+        return (
+            df.dropna(subset=["Date"])
+            .sort_values("Date")
+            .drop_duplicates("Date", keep="last")
+            .reset_index(drop=True)
+        )
+    except Exception:
+        return pd.DataFrame()
+
+
+def parse_intraday_sync_time(sync_text, ist):
+    try:
+        clean_text = str(sync_text).replace("Today,", "").replace("IST", "").strip()
+        parsed_time = datetime.datetime.strptime(clean_text, "%I:%M %p")
+
+        now_ist = datetime.datetime.now(ist)
+
+        return now_ist.replace(
+            hour=parsed_time.hour,
+            minute=parsed_time.minute,
+            second=0,
+            microsecond=0,
+        )
+    except Exception:
+        return None
+
+
+def is_full_live_intraday(live_aggregate, live_breadth, sync_text, ist):
+    """
+    Return True only when the complete dashboard aggregate is live and fresh.
+    This avoids showing a live badge based on A/D data alone.
+    """
+    if live_aggregate.empty or live_breadth.empty:
+        return False
+
+    now_ist = datetime.datetime.now(ist)
+    today = pd.Timestamp(now_ist.date()).normalize()
+
+    live_aggregate_today = live_aggregate[live_aggregate["Date"] == today]
+    live_breadth_today = live_breadth[live_breadth["Date"] == today]
+
+    if live_aggregate_today.empty or live_breadth_today.empty:
+        return False
+
+    if "Time" not in live_breadth_today.columns:
+        return False
+
+    intraday_time = str(live_breadth_today.iloc[-1]["Time"]).strip()
+
+    try:
+        time_obj = datetime.datetime.strptime(intraday_time, "%H:%M")
+        intraday_updated_at = now_ist.replace(
+            hour=time_obj.hour,
+            minute=time_obj.minute,
+            second=0,
+            microsecond=0,
+        )
+    except Exception:
+        return False
+
+    sync_updated_at = parse_intraday_sync_time(sync_text, ist)
+
+    if sync_updated_at is None:
+        return False
+
+    intraday_age = (now_ist - intraday_updated_at).total_seconds() / 60
+    sync_age = (now_ist - sync_updated_at).total_seconds() / 60
+
+    if intraday_age < 0 or sync_age < 0:
+        return False
+
+    return (
+        intraday_age <= LIVE_FRESHNESS_MINUTES
+        and sync_age <= LIVE_FRESHNESS_MINUTES
+    )
+
+
+df_live_breadth = load_intraday_time()
 is_live_active = False
 last_sync_display = last_sync_time
 ist = ZoneInfo("Asia/Kolkata")
 
-if not df_live.empty and 'Date' in df_live.columns:
+if not df_live_breadth.empty and 'Date' in df_live_breadth.columns:
     try:
         today_str_local = datetime.datetime.now(ist).strftime('%Y-%m-%d')
-        live_latest = df_live.iloc[-1]
+        live_latest = df_live_breadth.iloc[-1]
         if str(live_latest['Date']) == today_str_local:
             is_live_active = True
             intra_time = str(live_latest.get('Time', ''))
@@ -347,347 +440,4 @@ with hero_col1:
         st.plotly_chart(fig_dial, use_container_width=True, config={'displayModeBar': False})
         st.markdown(f"""
             <div style='text-align: center; margin-top: -10px; padding-bottom: 8px;'>
-                <span style='color: #16a34a; font-size: 15px; font-weight: 800;'>{advances} ADVANCES</span> &nbsp;&nbsp;
-                <span style='color: #dc2626; font-size: 15px; font-weight: 800;'>{declines} DECLINES</span>
-                <p style='color: {adv_change_color}; font-size: 12px; font-weight: 700; margin-top: 4px; margin-bottom: 0px;'>{adv_change_str} vs Yesterday EOD (Active Univ {total_univ})</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-with hero_col2:
-    with st.container(border=True):
-        st.markdown("<div class='card-title' style='margin-top: 5px; margin-left: 10px;'>TACTICAL COMMAND CENTER</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Your immediate action plan dynamically dictated by the Momentum Health Score.</div>", unsafe_allow_html=True)
-        st.markdown(f"""
-            <div style='padding: 0px 10px; font-size: 13px;'>
-                <div style='margin-bottom: 6px;'><b>🎯 Target Asset:</b> <span style='color: #334155;'>{tacs['asset']}</span></div>
-                <div style='margin-bottom: 6px;'><b>⚖️ Position Sizing:</b> <span style='color: #334155;'>{tacs['sizing']}</span></div>
-                <div style='margin-bottom: 6px;'><b>🛡️ Risk / Stop-Loss:</b> <span style='color: #334155;'>{tacs['risk']}</span></div>
-                <div style='margin-bottom: 6px;'><b>💰 Profit Strategy:</b> <span style='color: #334155;'>{tacs['profit']}</span></div>
-            </div>
-        """, unsafe_allow_html=True)
-        st.markdown("<hr style='margin: 8px 0px;'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='card-title' style='margin-left: 10px;'>DECISION ENGINE: KEY REGIME DRIVERS</div>", unsafe_allow_html=True)
-        
-        wr_c = "#16a34a" if ft_rate >= 45 else "#dc2626"
-        p20_c = "#16a34a" if p_fast >= 50 else "#dc2626"
-        p50_c = "#16a34a" if p_mid >= 50 else "#dc2626"
-        
-        regime_html = f"""
-        <div style='font-size: 12px; margin-bottom: 8px; padding-left: 10px;'>
-            <div style='margin-bottom: 4px;'>• Follow-Through Rate: <b style='color:{wr_c};'>{ft_rate:.1f}%</b></div>
-            <div style='margin-bottom: 4px;'>• Fast Breadth (>20 EMA): <b style='color:{p20_c};'>{p_fast:.1f}%</b></div>
-            <div style='margin-bottom: 4px;'>• Trend Breadth (>50 EMA): <b style='color:{p50_c};'>{p_mid:.1f}%</b></div>
-        </div>
-        """
-        
-        extremes = []
-        
-        latest_trin = latest.get('TRIN', np.nan)
-        if not pd.isna(latest_trin):
-            if latest_trin >= 1.5 and score <= 31: 
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Panic Capitulation. Weak regime + heavy selling = Contrarian Bottom Signal.)</span></div>")
-            elif latest_trin <= 0.7 and score >= 51: 
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand. Strong regime + heavy buying = Trend Confirmed.)</span></div>")
-
-        latest_mco = latest.get('MCO', np.nan)
-        if not pd.isna(latest_mco):
-            if latest_mco >= 50:
-                if score <= 31:
-                    extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>(Early Ignition Thrust. Surging momentum from the bottom. Watch for base breakouts.)</span></div>")
-                else:
-                    extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>(Power Trend. Short-term breadth is hot and institutional buying is aggressive.)</span></div>")
-            elif latest_mco <= -50 and score <= 31:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Deep Washout. Extreme short-term oversold. Look for the turn.)</span></div>")
-                
-        vol_ratio = latest.get('Volume_Ratio', np.nan)
-        if not pd.isna(vol_ratio):
-            if vol_ratio >= 2.0: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#16a34a;'>(Heavy Accumulation)</span></div>")
-            elif vol_ratio <= 0.5: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#dc2626;'>(Heavy Distribution)</span></div>")
-            
-        net_hl = safe_int(latest.get('Net_52W_High_Low', 0))
-        if net_hl >= 50: extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Net 52W H/L: +{net_hl}</b> <span style='color:#16a34a;'>(Broad Expansion)</span></div>")
-        elif net_hl <= -50: extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Net 52W H/L: {net_hl}</b> <span style='color:#dc2626;'>(Broad Capitulation)</span></div>")
-
-        ipo_highs = safe_int(latest.get('IPO_New_Highs', 0))
-        if ipo_highs >= 15:
-            extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>IPO Highs: {ipo_highs}</b> <span style='color:#f97316;'>(Speculative Frenzy. Market is hunting for high-beta risk.)</span></div>")
-
-        if extremes:
-            regime_html += "<div style='border-top: 1px dashed #cbd5e1; margin-top: 8px; padding-top: 8px; padding-left: 10px;'>"
-            regime_html += "<div style='font-size: 11px; font-weight: 800; color: #f97316; margin-bottom: 4px; text-transform: uppercase;'>⚠️ Actionable Extremes Triggered:</div>"
-            regime_html += "".join(extremes)
-            regime_html += "</div>"
-            
-        st.markdown(regime_html, unsafe_allow_html=True)
-
-m2, m3 = st.columns(2)
-with m2:
-    vol_ratio = latest.get('Volume_Ratio', np.nan)
-    if pd.isna(vol_ratio):
-        v_col, v_str = "#94a3b8", "N/A"
-    else:
-        v_col, v_str = ("#22c55e" if vol_ratio > 1.0 else "#ef4444"), f"{vol_ratio:.2f}"
-        
-    with st.container(border=True):
-        st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 5px;'>Volume Breadth Ratio</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Ratio of volume in advancing vs. declining stocks. >1.0 indicates institutional accumulation.</div>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: center;'><div class='metric-value' style='color: {v_col};'>{v_str}</div></div>", unsafe_allow_html=True)
-        fig_m2 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d.get('Volume_Ratio', pd.Series(dtype=float)).fillna(0), marker_color=['#22c55e' if v >= 1.0 else '#ef4444' for v in df_10d.get('Volume_Ratio', pd.Series([0]))], hovertemplate='Ratio: %{y:.2f}<extra></extra>'))
-        fig_m2.add_hline(y=1.0, line_dash="dash", line_color="#cbd5e1")
-        fig_m2.update_layout(height=100, margin=dict(l=5, r=5, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
-        fig_m2.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
-        fig_m2.update_yaxes(visible=False)
-        st.plotly_chart(fig_m2, use_container_width=True, config={'displayModeBar': False})
-
-with m3:
-    net_hl = safe_int(latest.get('Net_52W_High_Low', 0))
-    ipo_hl = safe_int(latest.get('IPO_New_Highs', 0))
-    h_col = "#22c55e" if net_hl > 0 else "#ef4444"
-    with st.container(border=True):
-        st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 5px;'>Net 52-Week Highs (Mature)</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='chart-desc' style='margin-left: 10px;'>Long-term strength. (Plus <b style='color:#3b82f6;'>{ipo_hl}</b> new IPOs hitting all-time highs).</div>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: center;'><div class='metric-value' style='color: {h_col};'>{net_hl}</div></div>", unsafe_allow_html=True)
-        fig_m3 = go.Figure(go.Bar(x=df_10d['Date_Str'], y=df_10d['Net_52W_High_Low'], marker_color=['#22c55e' if v >= 0 else '#ef4444' for v in df_10d['Net_52W_High_Low']], hovertemplate='Net HL: %{y:.0f}<extra></extra>'))
-        fig_m3.add_hline(y=0, line_dash="solid", line_color="#cbd5e1")
-        fig_m3.update_layout(height=100, margin=dict(l=5, r=5, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
-        fig_m3.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
-        fig_m3.update_yaxes(visible=False)
-        st.plotly_chart(fig_m3, use_container_width=True, config={'displayModeBar': False})
-
-# --- HISTORICAL ANALYTICS ---
-st.markdown("<br>", unsafe_allow_html=True)
-tf_col1, tf_col2 = st.columns([3, 1])
-with tf_col1: st.markdown("### 📊 Historical Market Analytics")
-with tf_col2: timeframe = st.radio("Chart Horizon:", ["1 Month", "3 Months", "6 Months", "1 Year", "3 Years", "6 Years"], horizontal=True, index=2)
-
-days_map = {"1 Month": 21, "3 Months": 63, "6 Months": 126, "1 Year": 252, "3 Years": 756, "6 Years": len(df_filtered)}
-plot_df = df_filtered.tail(days_map.get(timeframe, 126)).copy()
-
-plot_df['Date'] = pd.to_datetime(plot_df['Date'], errors='coerce')
-plot_df = plot_df.dropna(subset=['Date'])
-plot_df = plot_df.sort_values('Date').reset_index(drop=True)
-
-plot_df['Chart_Date_Str'] = plot_df['Date'].apply(lambda x: f"{x.day} {x.strftime('%B')[:3]}")
-
-# SECTION 1: UNIVERSE EMA BREADTH
-with st.container(border=True):
-    st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>UNIVERSE EMA BREADTH TRENDS &nbsp;|&nbsp; LATEST: <span style='color:#22c55e;'>200 EMA ({plot_df['Pct_Above_200_EMA'].iloc[-1]:.1f}%)</span> • <span style='color:#a855f7;'>50 EMA ({plot_df['Pct_Above_50_EMA'].iloc[-1]:.1f}%)</span> • <span style='color:#3b82f6;'>20 EMA ({plot_df['Pct_Above_20_EMA'].iloc[-1]:.1f}%)</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Percentage of mature active stocks above key moving averages. Watch for >50% cross as trend confirmation.</div>", unsafe_allow_html=True)
-    
-    fig_ema = go.Figure()
-    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Pct_Above_200_EMA'], mode='lines', name='% > 200 EMA', line=dict(color='#22c55e', width=2)))
-    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Pct_Above_50_EMA'], mode='lines', name='% > 50 EMA', line=dict(color='#a855f7', width=2)))
-    fig_ema.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Pct_Above_20_EMA'], mode='lines', name='% > 20 EMA', line=dict(color='#3b82f6', width=2)))
-    fig_ema.add_hline(y=50, line_dash="dash", line_color="#94a3b8", opacity=0.7)
-    fig_ema.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0))
-    fig_ema.update_yaxes(range=[0, 100], gridcolor='#f1f5f9', title="% Stocks")
-    fig_ema.update_xaxes(showgrid=False)
-    st.plotly_chart(fig_ema, use_container_width=True)
-
-# SECTION 2: SEGMENTED LIQUIDITY FLOW
-with st.container(border=True):
-    st.markdown("<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>SEGMENTED LIQUIDITY FLOW (45-DAY ROLLING TURNOVER RANK)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Breadth broken down by liquidity. Divergence (e.g., Large caps up, Micro caps down) signals narrow, fragile rallies.</div>", unsafe_allow_html=True)
-    cap_tab1, cap_tab2, cap_tab3 = st.tabs(["% Stocks Above 200 EMA", "% Stocks Above 50 EMA", "% Stocks Above 20 EMA"])
-    
-    def plot_liquidity(col_prefix, name):
-        st.markdown(f"<div style='font-size: 11px; font-weight: 700; color: #64748b; margin-top: -10px; margin-bottom: 5px; padding-left: 10px;'>LATEST: <span style='color:#2563eb;'>Top 100 ({plot_df.get(f'Large_{col_prefix}', pd.Series([0])).iloc[-1]:.1f}%)</span> &nbsp;|&nbsp; <span style='color:#f97316;'>Mid 150 ({plot_df.get(f'Mid_{col_prefix}', pd.Series([0])).iloc[-1]:.1f}%)</span> &nbsp;|&nbsp; <span style='color:#16a34a;'>Lower 250 ({plot_df.get(f'Small_{col_prefix}', pd.Series([0])).iloc[-1]:.1f}%)</span> &nbsp;|&nbsp; <span style='color:#dc2626;'>Micro ({plot_df.get(f'Micro_{col_prefix}', pd.Series([0])).iloc[-1]:.1f}%)</span></div>", unsafe_allow_html=True)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df.get(f'Large_{col_prefix}', pd.Series(dtype=float)), mode='lines', name='Top 100 Liq', line=dict(color='#2563eb', width=2)))
-        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df.get(f'Mid_{col_prefix}', pd.Series(dtype=float)), mode='lines', name='Mid 150 Liq', line=dict(color='#f97316', width=2)))
-        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df.get(f'Small_{col_prefix}', pd.Series(dtype=float)), mode='lines', name='Lower 250 Liq', line=dict(color='#16a34a', width=2)))
-        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df.get(f'Micro_{col_prefix}', pd.Series(dtype=float)), mode='lines', name='Micro Liq', line=dict(color='#dc2626', width=2)))
-        fig.add_hline(y=50, line_dash="dash", line_color="#94a3b8", opacity=0.7)
-        fig.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        fig.update_yaxes(range=[0, 100], gridcolor='#f1f5f9')
-        fig.update_xaxes(showgrid=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with cap_tab1: plot_liquidity('Pct_200_EMA', '200')
-    with cap_tab2: plot_liquidity('Pct_50_EMA', '50')
-    with cap_tab3: plot_liquidity('Pct_20_EMA', '20')
-
-# SECTION 3: TACTICAL INTERNAL EXERTION (MCO & TRIN CHARTS)
-st.markdown("<br>", unsafe_allow_html=True)
-tac_col1, tac_col2 = st.columns(2)
-
-with tac_col1:
-    with st.container(border=True):
-        latest_mco_chart = plot_df['MCO'].iloc[-1] if 'MCO' in plot_df.columns and not plot_df['MCO'].isna().all() else 0
-        mco_color = '#16a34a' if latest_mco_chart >= 0 else '#dc2626'
-        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>McCLELLAN OSCILLATOR (MCO) &nbsp;|&nbsp; LATEST: <span style='color:{mco_color};'>{latest_mco_chart:.1f}</span></div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Short-term momentum of advancing issues. Readings >+50 or <-50 signal extreme conditions.</div>", unsafe_allow_html=True)
-        
-        colors_mco = ['#22c55e' if val >= 0 else '#ef4444' for val in plot_df.get('MCO', pd.Series([0]))]
-        fig_mco = go.Figure(go.Bar(x=plot_df['Date'], y=plot_df.get('MCO', pd.Series(dtype=float)), marker_color=colors_mco, hovertemplate='MCO: %{y:.1f}<extra></extra>'))
-        fig_mco.add_hline(y=0, line_dash="solid", line_color="#94a3b8")
-        fig_mco.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
-        fig_mco.update_yaxes(gridcolor='#f1f5f9', zerolinecolor='black')
-        fig_mco.update_xaxes(showgrid=False)
-        st.plotly_chart(fig_mco, use_container_width=True)
-
-with tac_col2:
-    with st.container(border=True):
-        latest_trin_chart = plot_df['TRIN'].iloc[-1] if 'TRIN' in plot_df.columns and not plot_df['TRIN'].isna().all() else np.nan
-        trin_color = "#94a3b8" if pd.isna(latest_trin_chart) else ('#16a34a' if latest_trin_chart < 1.0 else '#dc2626')
-        trin_str = "N/A" if pd.isna(latest_trin_chart) else f"{latest_trin_chart:.2f}"
-        
-        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>TRIN (ARMS INDEX) &nbsp;|&nbsp; LATEST: <span style='color:{trin_color};'>{trin_str}</span></div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Contrarian indicator balancing A/D and Volume. <0.7 shows aggressive buying, >1.5 shows panic selling.</div>", unsafe_allow_html=True)
-        
-        colors_trin = ['#22c55e' if (pd.notna(val) and val < 1.0) else '#ef4444' for val in plot_df.get('TRIN', pd.Series([1.0]))]
-        fig_trin = go.Figure(go.Bar(x=plot_df['Date'], y=plot_df.get('TRIN', pd.Series(dtype=float)), marker_color=colors_trin, hovertemplate='TRIN: %{y:.2f}<extra></extra>'))
-        fig_trin.add_hline(y=1.0, line_dash="dash", line_color="#cbd5e1", annotation_text="Neutral (1.0)")
-        fig_trin.add_hline(y=0.7, line_dash="dot", line_color="#22c55e", annotation_text="Demand (<0.7)")
-        fig_trin.add_hline(y=1.5, line_dash="dot", line_color="#ef4444", annotation_text="Panic (>1.5)")
-        
-        y_max = min(5.0, float(plot_df['TRIN'].dropna().max()) + 0.5) if not plot_df['TRIN'].dropna().empty else 3.0
-        fig_trin.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified", yaxis_range=[0, y_max])
-        fig_trin.update_yaxes(gridcolor='#f1f5f9')
-        fig_trin.update_xaxes(showgrid=False)
-        st.plotly_chart(fig_trin, use_container_width=True)
-
-# SECTION 4: BREAKOUT SUCCESS
-with st.container(border=True):
-    t3_wins = plot_df.get('T3_Wins', pd.Series([0])).fillna(0)
-    t3_breaks = plot_df.get('T3_Breakouts', pd.Series([0])).fillna(0)
-    t3_fails = (t3_breaks - t3_wins).clip(lower=0)
-    
-    win_rate = np.where(t3_breaks > 0, (t3_wins / t3_breaks) * 100, 0)
-    plot_df['Win_Rate_Plot'] = win_rate
-    plot_df['T3_Wins'] = t3_wins
-    plot_df['T3_Fails'] = t3_fails
-    plot_df['T3_Total'] = t3_breaks
-    
-    latest_wr = plot_df['Win_Rate_Plot'].iloc[-1] if not pd.isna(plot_df['Win_Rate_Plot'].iloc[-1]) else 0
-    wr_color = '#16a34a' if latest_wr >= 45 else '#dc2626'
-    
-    st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>VCP BREAKOUT FOLLOW-THROUGH (T+3 WIN RATE) &nbsp;|&nbsp; LATEST: <span style='color:{wr_color};'>{latest_wr:.1f}%</span> (3-Day Cohort)</div>", unsafe_allow_html=True)
-    st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Tracks the T+3 win rate of breakouts. >=45% begins scoring in the momentum composite.</div>", unsafe_allow_html=True)
-    
-    colors_wr = ['#22c55e' if val >= 45 else '#ef4444' for val in plot_df['Win_Rate_Plot']]
-    
-    fig_ft = go.Figure(go.Bar(
-        x=plot_df['Date'], 
-        y=plot_df['Win_Rate_Plot'], 
-        marker_color=colors_wr, 
-        customdata=np.stack((plot_df['T3_Total'], plot_df['T3_Wins'], plot_df['T3_Fails']), axis=-1),
-        hovertemplate='<b>Win Rate: %{y:.1f}%</b><br>Total Breakouts: %{customdata[0]}<br>Wins: %{customdata[1]}<br>Fails: %{customdata[2]}<extra></extra>'
-    ))
-    
-    fig_ft.add_hline(y=45, line_dash="dash", line_color="#22c55e", annotation_text="45% Edge Baseline", annotation_position="top left")
-    
-    fig_ft.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
-    fig_ft.update_yaxes(range=[0, 100], gridcolor='#f1f5f9', title="Win Rate %")
-    fig_ft.update_xaxes(showgrid=False)
-    st.plotly_chart(fig_ft, use_container_width=True)
-
-# SECTION 5: MOMENTUM THRUST & OUTLIERS
-out1, out2 = st.columns(2)
-with out1:
-    with st.container(border=True):
-        latest_up_25 = safe_int(plot_df['Up_25_1M_Count'].iloc[-1]) if not plot_df['Up_25_1M_Count'].empty else 0
-        latest_dn_25 = safe_int(plot_df['Down_25_1M_Count'].iloc[-1]) if not plot_df['Down_25_1M_Count'].empty else 0
-        
-        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>ROLLING 1-MONTH 25% MOVERS &nbsp;|&nbsp; LATEST: <span style='color:#16a34a;'>{latest_up_25} UP</span> / <span style='color:#dc2626;'>{latest_dn_25} DOWN</span></div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Identifies structural outliers. More up-movers than down-movers signifies strong momentum thrusts.</div>", unsafe_allow_html=True)
-        
-        fig_outliers = go.Figure()
-        fig_outliers.add_trace(go.Bar(x=plot_df['Date'], y=plot_df['Up_25_1M_Count'], name='Up 25%+ in 1M', marker_color='#22c55e'))
-        fig_outliers.add_trace(go.Bar(x=plot_df['Date'], y=-plot_df['Down_25_1M_Count'], name='Down 25%+ in 1M', marker_color='#ef4444', customdata=plot_df['Down_25_1M_Count'], hovertemplate='Down 25%: <b>%{customdata:.0f}</b><extra></extra>'))
-        fig_outliers.update_layout(barmode='relative', height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
-        fig_outliers.update_yaxes(gridcolor='#f1f5f9', zerolinecolor='black')
-        fig_outliers.update_xaxes(showgrid=False)
-        st.plotly_chart(fig_outliers, use_container_width=True)
-
-with out2:
-    with st.container(border=True):
-        latest_up_4 = safe_int(plot_df['Rolling_3D_Up_4'].iloc[-1]) if not plot_df['Rolling_3D_Up_4'].empty else 0
-        latest_dn_4 = safe_int(plot_df['Rolling_3D_Down_4'].iloc[-1]) if not plot_df['Rolling_3D_Down_4'].empty else 0
-        
-        st.markdown(f"<div class='card-title' style='margin-left: 10px; margin-top: 10px;'>3-DAY ROLLING 4% THRUST MOVERS &nbsp;|&nbsp; LATEST: <span style='color:#16a34a;'>{latest_up_4} UP</span> / <span style='color:#dc2626;'>{latest_dn_4} DOWN</span></div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Measures short-term explosive price action. Clusters of Up 4%+ days initiate new bull phases.</div>", unsafe_allow_html=True)
-        
-        fig_movers = go.Figure()
-        fig_movers.add_trace(go.Bar(x=plot_df['Date'], y=plot_df['Rolling_3D_Up_4'], name='Up 4%+', marker_color='#22c55e'))
-        fig_movers.add_trace(go.Bar(x=plot_df['Date'], y=-plot_df['Rolling_3D_Down_4'], name='Down 4%+', marker_color='#ef4444', customdata=plot_df['Rolling_3D_Down_4'], hovertemplate='Down 4%+: <b>%{customdata:.0f}</b><extra></extra>'))
-        fig_movers.update_layout(barmode='relative', height=280, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False, hovermode="x unified")
-        fig_movers.update_yaxes(gridcolor='#f1f5f9', zerolinecolor='black')
-        fig_movers.update_xaxes(showgrid=False)
-        st.plotly_chart(fig_movers, use_container_width=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-st.markdown("### 🔍 Stock Level Drill-Down")
-
-selected_date_display = f"{st.session_state.analysis_date.day} {st.session_state.analysis_date.strftime('%B %Y')}"
-if st.session_state.analysis_date == max_date:
-    selected_date_display = actual_date_str
-st.markdown(f"<p style='color: #64748b; font-size: 13px;'>Filter the underlying constituent stocks for <b>{selected_date_display}</b></p>", unsafe_allow_html=True)
-
-@st.cache_data(max_entries=10, show_spinner=False)
-def get_drilldown_data(target_date):
-    try:
-        df = load_trailing_cache()
-        if df.empty: return pd.DataFrame()
-        
-        target_date_normalized = pd.Timestamp(target_date).normalize()
-        
-        day_data = df[df['Date'].dt.normalize() == target_date_normalized].copy()
-        if day_data.empty: return pd.DataFrame()
-        
-        day_data = day_data[day_data['Active_Universe']].copy()
-        day_data['Daily_Pct'] = day_data['Daily_Pct'].round(2)
-        day_data['Pct_1M'] = day_data['Pct_1M'].round(2)
-        
-        return day_data
-    except Exception as e:
-        st.error(f"Failed to load drill-down data: {str(e)}")
-        return pd.DataFrame()
-
-drill_col, _ = st.columns([1.5, 1])
-with drill_col:
-    param_choices = st.multiselect("Select Parameters to Filter (Combines with AND):", [
-        "Advances (Stocks in Green)", "Declines (Stocks in Red)", "Stocks > 20 EMA (Mature Only)", "Stocks > 50 EMA (Mature Only)", "Stocks > 200 EMA (Mature Only)",
-        "Up 4% or more Today", "Down 4% or more Today", "1-Month 25% Winners", "1-Month 25% Losers", "New 52-Week Highs (Mature > 1Yr)", "New IPO/Listing Highs (< 1Yr)"
-    ])
-
-with st.spinner("🔍 Loading historical stock data..."):
-    drill_data = get_drilldown_data(st.session_state.analysis_date)
-
-if not drill_data.empty:
-    res = drill_data.copy()
-    if param_choices:
-        for param in param_choices:
-            if param == "Advances (Stocks in Green)": res = res[res['Gainer'] == True]
-            elif param == "Declines (Stocks in Red)": res = res[res['Loser'] == True]
-            elif param == "Stocks > 20 EMA (Mature Only)": res = res[res['Above_20_EMA'] == True]
-            elif param == "Stocks > 50 EMA (Mature Only)": res = res[res['Above_50_EMA'] == True]
-            elif param == "Stocks > 200 EMA (Mature Only)": res = res[res['Above_200_EMA'] == True]
-            elif param == "Up 4% or more Today": res = res[res['Up_4_Pct'] == True]
-            elif param == "Down 4% or more Today": res = res[res['Down_4_Pct'] == True]
-            elif param == "1-Month 25% Winners": res = res[res['Up_25_1M'] == True]
-            elif param == "1-Month 25% Losers": res = res[res['Down_25_1M'] == True]
-            elif param == "New 52-Week Highs (Mature > 1Yr)": res = res[res['New_52W_High'] == True]
-            elif param == "New IPO/Listing Highs (< 1Yr)": res = res[res['IPO_New_High'] == True]
-
-        res = res[['Symbol', 'Close', 'Daily_Pct', 'Pct_1M']].sort_values('Daily_Pct', ascending=False)
-        res = res.rename(columns={'Daily_Pct': 'Daily_%_Change', 'Pct_1M': '1M_%_Change'})
-        
-        st.write(f"**Found {len(res)} matching VIP active stocks** for {selected_date_display}:")
-        st.dataframe(res, use_container_width=True, height=350)
-    else:
-        st.info("👆 Select one or more parameters above to filter the VIP stock list.")
-else:
-    st.info("💡 Deep dive list requires 'trailing_cache.parquet' in repository.")
-
-st.markdown("<br><hr>", unsafe_allow_html=True)
-bot_col, _ = st.columns([1.5, 4])
-with bot_col:
-    st.markdown(f"<div style='text-align: center; font-size: 11px; color: #94a3b8; margin-bottom: 5px;'>Last Successful Database Update: {last_sync_display}</div>", unsafe_allow_html=True)
-    if not st.session_state.sync_in_progress:
-        if st.button("📅 Run End of Day Analytics", use_container_width=True):
-            if trigger_github_action("eod_update.yml", "EOD Sync"):
-                st.session_state.sync_in_progress = True
-                st.session_state.sync_start_time = time.time()
-                st.session_state.pre_sync_time = last_sync_display
-                st.rerun()
+                <span style='color: #16a34a; font-size: 15px; font-weight: 800;'>{advances} ADVANCES</span> &nbsp;&
