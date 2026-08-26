@@ -84,14 +84,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add \
-            live_intraday_aggregate.csv \
-            trailing_cache.parquet \
-            live_intraday.parquet \
-            dashboard_data.parquet \
-            live_intraday_breadth.csv \
-            last_sync.txt \
-            intraday_audits
+          # Add only files that actually exist
+          files_to_add=()
+          for f in live_intraday_aggregate.csv trailing_cache.parquet live_intraday.parquet dashboard_data.parquet live_intraday_breadth.csv last_sync.txt intraday_audits; do
+            if [ -e "$f" ]; then
+              files_to_add+=("$f")
+            fi
+          done
+
+          if [ ${#files_to_add[@]} -eq 0 ]; then
+            echo "No intraday data files found to commit."
+            exit 0
+          fi
+
+          git add "${files_to_add[@]}"
 
           if git diff --cached --quiet; then
             echo "No intraday data changes to commit."
