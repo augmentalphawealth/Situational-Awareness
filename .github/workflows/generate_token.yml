@@ -3,8 +3,8 @@ name: Daily Token Rotation
 on:
   workflow_dispatch:
   schedule:
-    # Runs at 03:00 UTC (08:30 AM IST) - Safely after Zerodha's morning flush
-    - cron: '0 3 * * 1-5'  
+    # Runs at 03:00 UTC = 08:30 AM IST, Monday–Friday
+    - cron: '0 3 * * 1-5'
 
 jobs:
   rotate-token:
