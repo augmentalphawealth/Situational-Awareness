@@ -1,0 +1,18 @@
+{
+  "mode": "eod",
+  "database_before": "2026-08-26",
+  "latest_market_date": "2026-08-26",
+  "recovered_dates": [],
+  "backfill_rows": 0,
+  "today_fetched": true,
+  "backup": "eod_backups/nse_6yr_historical.backup.20260826_223706.parquet",
+  "backfill_failures": 0,
+  "missing_pairs": 0,
+  "nse_current_eq_symbols": 2291,
+  "latest_valid_eq_symbols": 2285,
+  "latest_missing_eq_symbols": 6,
+  "latest_eod_coverage": 0.997381,
+  "minimum_eod_coverage": 0.97,
+  "critical_missing": [],
+  "quote_chunk_failures": 0
+}
