@@ -3,8 +3,6 @@ name: Intraday Update
 on:
   workflow_dispatch:
   schedule:
-    # Runs every 15 minutes during NSE trading hours (08:45 AM – 04:15 PM IST)
-    # UTC 3:45–10:00 = IST 9:15 AM–3:30 PM (market hours), with buffer
     - cron: '*/15 3-10 * * 1-5'
 
 jobs:
@@ -13,6 +11,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Read Kite access token from secrets.json
+        run: |
+          KITE_ACCESS_TOKEN=$(python -c "import json; print(json.load(open('secrets.json'))['KITE_ACCESS_TOKEN'])")
+          echo "KITE_ACCESS_TOKEN=$KITE_ACCESS_TOKEN" >> $GITHUB_ENV
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,6 +33,7 @@ jobs:
         env:
           KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
           KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          KITE_ACCESS_TOKEN: ${{ env.KITE_ACCESS_TOKEN }}
           KITE_USER_ID: ${{ secrets.KITE_USER_ID }}
           KITE_PASSWORD: ${{ secrets.KITE_PASSWORD }}
           KITE_TOTP: ${{ secrets.KITE_TOTP }}
