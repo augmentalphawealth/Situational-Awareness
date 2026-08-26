@@ -12,11 +12,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Read Kite access token from secrets.json
-        run: |
-          KITE_ACCESS_TOKEN=$(python -c "import json; print(json.load(open('secrets.json'))['KITE_ACCESS_TOKEN'])")
-          echo "KITE_ACCESS_TOKEN=$KITE_ACCESS_TOKEN" >> $GITHUB_ENV
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -28,6 +23,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
+
+      - name: Generate fresh Kite token
+        env:
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          KITE_USER_ID: ${{ secrets.KITE_USER_ID }}
+          KITE_PASSWORD: ${{ secrets.KITE_PASSWORD }}
+          KITE_TOTP: ${{ secrets.KITE_TOTP }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          python -u update_kite_token.py
+
+      - name: Read generated token
+        run: |
+          KITE_ACCESS_TOKEN=$(python -c "import json; print(json.load(open('secrets.json'))['KITE_ACCESS_TOKEN'])")
+          echo "KITE_ACCESS_TOKEN=$KITE_ACCESS_TOKEN" >> $GITHUB_ENV
 
       - name: Run intraday analysis
         env:
