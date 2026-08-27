@@ -1,0 +1,17 @@
+{
+  "date": "2026-08-27",
+  "time_ist": "02:15 PM IST",
+  "status": "LIVE_INTRADAY",
+  "nse_current_eq_symbols": 2288,
+  "eligible_symbols_with_history": 2287,
+  "current_eq_without_history": 1,
+  "historical_not_current_eq": 18,
+  "valid_live_quotes": 2273,
+  "missing_or_invalid_live_quotes": 14,
+  "coverage": 0.993878,
+  "minimum_coverage": 0.8,
+  "critical_missing": [],
+  "quote_failure_records": 14,
+  "live_aggregate_file": "live_intraday_aggregate.csv",
+  "composite_score": 44
+}
