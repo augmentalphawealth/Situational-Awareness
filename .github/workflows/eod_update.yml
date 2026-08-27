@@ -3,7 +3,9 @@ name: EOD Update
 on:
   workflow_dispatch:
   schedule:
+    # 03:30 UTC = 09:00 AM IST
     - cron: "30 3 * * 1-5"
+    # 10:30 UTC = 04:00 PM IST
     - cron: "30 10 * * 1-5"
 
 permissions:
@@ -66,6 +68,14 @@ jobs:
           set -euo pipefail
           python -u fetch_eod_6yr.py
 
+      - name: Write EOD finalized timestamp
+        run: |
+          set -euo pipefail
+          export TZ=Asia/Kolkata
+          echo "$(date '+%d %B %Y — EOD Finalized at %I:%M %p IST')" > last_sync.txt
+          echo "Updated last_sync.txt:"
+          cat last_sync.txt
+
       - name: Commit and push EOD updates
         run: |
           set -euo pipefail
@@ -77,6 +87,7 @@ jobs:
             historical_breadth_regime_6yr.csv \
             trailing_cache.parquet \
             nse_6yr_historical.parquet \
+            last_sync.txt \
             eod_audits
 
           if git diff --cached --quiet; then
