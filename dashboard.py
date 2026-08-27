@@ -9,7 +9,11 @@ import datetime
 from io import StringIO, BytesIO
 from zoneinfo import ZoneInfo
 
-st.set_page_config(page_title="Situational Awareness Engine", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="Situational Awareness Engine",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 st.markdown("""
     <style>
@@ -33,6 +37,7 @@ REPO_NAME = "Situational-Awareness"
 BRANCH = "main"
 
 HISTORICAL_FILE = "historical_breadth_regime_6yr.csv"
+LIVE_AGGREGATE_FILE = "live_intraday_aggregate.csv"
 INTRADAY_FILE = "live_intraday_breadth.csv"
 SYNC_FILE = "last_sync.txt"
 
@@ -72,7 +77,7 @@ def read_remote_file(path):
     if token:
         headers["Authorization"] = f"token {token}"
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=15)
         if res.status_code == 200:
             return res.text
     except Exception:
@@ -92,17 +97,18 @@ if "sync_in_progress" not in st.session_state:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def load_intraday_time():
+def load_remote_csv(path):
     try:
-        csv_text = read_remote_file(INTRADAY_FILE)
-        if csv_text:
-            df = pd.read_csv(StringIO(csv_text))
-            if "Date" in df.columns:
-                df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
-            return df
+        csv_text = read_remote_file(path)
+        if not csv_text:
+            return pd.DataFrame()
+        df = pd.read_csv(StringIO(csv_text))
+        if df.empty or "Date" not in df.columns:
+            return pd.DataFrame()
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+        return df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
     except Exception:
-        pass
-    return pd.DataFrame()
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -115,17 +121,7 @@ def load_agg_data():
                 return df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
         except Exception:
             pass
-
-    csv_text = read_remote_file(HISTORICAL_FILE)
-    if csv_text:
-        try:
-            df = pd.read_csv(StringIO(csv_text))
-            if not df.empty and "Date" in df.columns:
-                df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
-                return df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-        except Exception:
-            pass
-    return pd.DataFrame()
+    return load_remote_csv(HISTORICAL_FILE)
 
 
 @st.cache_data(max_entries=1, show_spinner=False)
@@ -138,10 +134,9 @@ def load_trailing_cache():
             return df
         except Exception:
             pass
-
     url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{get_latest_commit_sha()}/{file_name}"
     try:
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=30)
         if res.status_code == 200:
             df = pd.read_parquet(BytesIO(res.content))
             df["Date"] = pd.to_datetime(df["Date"])
@@ -176,46 +171,71 @@ now_ist = datetime.datetime.now(ist)
 today_ist = pd.Timestamp(now_ist.date()).normalize()
 last_sync_time = get_last_updated_time()
 
-df_agg = load_agg_data()
-if df_agg.empty:
+df_eod = load_agg_data()
+if df_eod.empty:
     st.error(f"Data file '{HISTORICAL_FILE}' not found. Please run the Historical or EOD script to generate it.")
     st.stop()
 
-df_live = load_intraday_time()
-eod_for_today_available = (df_agg["Date"] == today_ist).any()
+df_live_aggregate = load_remote_csv(LIVE_AGGREGATE_FILE)
+df_live_breadth = load_remote_csv(INTRADAY_FILE)
+
+eod_for_today_available = (df_eod["Date"] == today_ist).any()
+live_aggregate_today = df_live_aggregate[df_live_aggregate["Date"] == today_ist].copy()
+live_breadth_today = df_live_breadth[df_live_breadth["Date"] == today_ist].copy()
+
+market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+market_close = now_ist.replace(hour=15, minute=35, second=0, microsecond=0)
+is_weekday = now_ist.weekday() < 5
+is_market_window = is_weekday and market_open <= now_ist <= market_close
+
 live_latest = None
-is_live_active = False
-post_close_intraday_pending = False
-last_sync_display = f"{last_sync_time} (EOD)"
+live_time_label = ""
+if not live_breadth_today.empty:
+    live_latest = live_breadth_today.iloc[-1]
+    raw_time = str(live_latest.get("Time", "")).strip()
+    if raw_time:
+        try:
+            live_time_label = datetime.datetime.strptime(raw_time, "%H:%M").strftime("%I:%M %p")
+        except Exception:
+            live_time_label = raw_time
 
-if not eod_for_today_available and not df_live.empty and "Date" in df_live.columns:
-    try:
-        live_today = df_live[df_live["Date"] == today_ist].copy()
-        if not live_today.empty:
-            live_latest = live_today.iloc[-1]
-            intraday_time = str(live_latest.get("Time", "")).strip()
-            time_label = ""
-            if intraday_time:
-                try:
-                    time_label = datetime.datetime.strptime(intraday_time, "%H:%M").strftime("%I:%M %p")
-                except Exception:
-                    time_label = intraday_time
+full_live_available = not live_aggregate_today.empty
+is_live_active = (
+    not eod_for_today_available
+    and full_live_available
+    and is_market_window
+)
+post_close_intraday_pending = (
+    not eod_for_today_available
+    and full_live_available
+    and is_weekday
+    and now_ist > market_close
+)
 
-            market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
-            market_close = now_ist.replace(hour=15, minute=35, second=0, microsecond=0)
-            is_weekday = now_ist.weekday() < 5
+# EOD remains authoritative. If it has not yet written today's row, append
+# the complete live aggregate for today to make every dashboard metric current.
+df_agg = df_eod.copy()
+if not eod_for_today_available and full_live_available:
+    df_agg = pd.concat(
+        [
+            df_eod[df_eod["Date"] < today_ist],
+            live_aggregate_today,
+        ],
+        ignore_index=True,
+        sort=False,
+    )
+    df_agg = df_agg.sort_values("Date").drop_duplicates("Date", keep="last").reset_index(drop=True)
 
-            if is_weekday and market_open <= now_ist <= market_close:
-                is_live_active = True
-                last_sync_display = f"Today, {time_label} IST (Live Intraday)"
-            elif is_weekday and now_ist > market_close:
-                post_close_intraday_pending = True
-                last_sync_display = f"Today, {time_label} IST (Intraday Close Snapshot — EOD Processing Pending)"
-    except Exception:
-        live_latest = None
-        is_live_active = False
-        post_close_intraday_pending = False
-        last_sync_display = f"{last_sync_time} (EOD)"
+if eod_for_today_available:
+    last_sync_display = f"{last_sync_time} (EOD Finalized)"
+elif is_live_active:
+    last_sync_display = f"Today, {live_time_label} IST (Live Intraday)"
+elif post_close_intraday_pending:
+    last_sync_display = f"Today, {live_time_label} IST (Intraday Close Snapshot — EOD Processing Pending)"
+elif full_live_available:
+    last_sync_display = f"Today, {live_time_label} IST (Latest Intraday Snapshot)"
+else:
+    last_sync_display = f"{last_sync_time} (EOD)"
 
 unique_dates = df_agg["Date"].sort_values().unique()
 min_date = pd.to_datetime(unique_dates[0])
@@ -295,17 +315,17 @@ if df_filtered.empty:
 latest = df_filtered.iloc[-1].copy()
 prev = df_filtered.iloc[-2].copy() if len(df_filtered) > 1 else latest.copy()
 
-# Between market close and completion of today's EOD workflow, retain only
-# the intraday A/D snapshot. All regime score and historical analytics remain EOD.
-use_intraday_ad_snapshot = (
-    (is_live_active or post_close_intraday_pending)
-    and st.session_state.analysis_date == max_date
-    and live_latest is not None
+is_selected_today_live = (
+    st.session_state.analysis_date.normalize() == today_ist
+    and not eod_for_today_available
+    and full_live_available
 )
 
 score = safe_int(latest.get("Composite_Score", 0))
-p_fast = latest.get("Pct_Above_20_EMA", 0)
-p_mid = latest.get("Pct_Above_50_EMA", 0)
+p_fast = pd.to_numeric(latest.get("Pct_Above_20_EMA", 0), errors="coerce")
+p_mid = pd.to_numeric(latest.get("Pct_Above_50_EMA", 0), errors="coerce")
+p_fast = 0 if pd.isna(p_fast) else p_fast
+p_mid = 0 if pd.isna(p_mid) else p_mid
 ft_rate = (latest.get("T3_Wins", 0) / latest.get("T3_Breakouts", 1) * 100) if latest.get("T3_Breakouts", 0) > 0 else 0
 
 if score >= 71:
@@ -346,7 +366,7 @@ def get_bar_color(val):
 with st.container(border=True):
     top_c1, top_c2 = st.columns([1.2, 2.8])
     with top_c1:
-        score_label = "MOMENTUM HEALTH SCORE (EOD)"
+        score_label = "MOMENTUM HEALTH SCORE (LIVE INTRADAY)" if is_selected_today_live else "MOMENTUM HEALTH SCORE (EOD)"
         st.markdown(f"""
             <div style='text-align: center; padding-top: 10px;'>
                 <div class='card-title' style='font-size: 12px;'>{score_label}</div>
@@ -356,7 +376,7 @@ with st.container(border=True):
         """, unsafe_allow_html=True)
     with top_c2:
         st.markdown("<div class='card-title'>10-Day Health Trend</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc'>Tracks the EOD regime score over time. Crucial for spotting momentum shifts and trend decays.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='chart-desc'>Tracks EOD history plus today's live regime score when available.</div>", unsafe_allow_html=True)
         fig_m1 = go.Figure(go.Bar(x=df_10d["Date_Str"], y=df_10d["Composite_Score"], marker_color=[get_bar_color(v) for v in df_10d["Composite_Score"]], text=df_10d["Composite_Score"], textposition="outside", textangle=0, hovertemplate="Score: <b>%{y}</b><extra></extra>"))
         fig_m1.update_layout(height=120, margin=dict(l=10, r=10, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
         fig_m1.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
@@ -369,14 +389,14 @@ declines = safe_int(latest.get("Declines", 0))
 total_univ = safe_int(latest.get("Total_Universe", 2400))
 actual_date_str = f"{st.session_state.analysis_date.day} {st.session_state.analysis_date.strftime('%B %Y')}"
 
-if use_intraday_ad_snapshot:
+if is_selected_today_live and live_latest is not None:
     live_adv = safe_int(live_latest.get("Advances", advances))
     live_dec = safe_int(live_latest.get("Declines", declines))
     if (live_adv + live_dec) > 0:
         advances = live_adv
         declines = live_dec
         total_univ = safe_int(live_latest.get("Total_Universe", total_univ))
-        intraday_label = "⚡ LIVE INTRADAY A/D SNAPSHOT" if is_live_active else "⏳ INTRADAY CLOSE SNAPSHOT — EOD PROCESSING PENDING"
+        intraday_label = "⚡ LIVE INTRADAY SNAPSHOT" if is_live_active else "⏳ INTRADAY CLOSE SNAPSHOT — EOD PROCESSING PENDING"
         actual_date_str = f"{today_ist.day} {today_ist.strftime('%B %Y')} <span style='color:#eab308; font-weight:800;'>({intraday_label})</span>"
 
 st.markdown(f"<p style='color: #475569; font-size: 13px; font-weight: 600; margin-top: 15px;'>Market Breadth Status for: <span style='color:#0f172a;'>{actual_date_str}</span></p>", unsafe_allow_html=True)
@@ -395,23 +415,23 @@ adv_change_color = "#16a34a" if adv_change >= 0 else "#dc2626"
 with hero_col1:
     with st.container(border=True):
         st.markdown("<div class='card-title' style='text-align: center; margin-top: 5px;'>OF UNIVERSE ADVANCING</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='text-align: center;'>Real-time buying vs. selling participation. Core indicator for confirming broad market support.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='chart-desc' style='text-align: center;'>Buying vs. selling participation across the active universe.</div>", unsafe_allow_html=True)
         fig_dial = go.Figure(go.Indicator(mode="gauge+number", value=adv_pct, number={"suffix": "%", "font": {"size": 36, "color": "#0f172a"}}, gauge={"axis": {"range": [0, 100], "visible": False}, "bar": {"color": "#ef4444" if adv_pct < 50 else "#22c55e", "thickness": 0.18}, "bgcolor": "#f1f5f9", "borderwidth": 0}))
         fig_dial.update_layout(height=150, margin=dict(l=10, r=10, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig_dial, use_container_width=True, config={"displayModeBar": False})
-        st.markdown("<div style='text-align: center; margin-top: -10px; padding-bottom: 8px;'>" + f"<span style='color: #16a34a; font-size: 15px; font-weight: 800;'>{advances} ADVANCES</span> &nbsp;&nbsp;" + f"<span style='color: #dc2626; font-size: 15px; font-weight: 800;'>{declines} DECLINES</span>" + f"<p style='color: {adv_change_color}; font-size: 12px; font-weight: 700; margin-top: 4px; margin-bottom: 0px;'>{adv_change_str} vs Yesterday EOD (Active Univ {total_univ})</p>" + "</div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; margin-top: -10px; padding-bottom: 8px;'>" + f"<span style='color: #16a34a; font-size: 15px; font-weight: 800;'>{advances} ADVANCES</span> &nbsp;&nbsp;" + f"<span style='color: #dc2626; font-size: 15px; font-weight: 800;'>{declines} DECLINES</span>" + f"<p style='color: {adv_change_color}; font-size: 12px; font-weight: 700; margin-top: 4px; margin-bottom: 0px;'>{adv_change_str} vs Yesterday EOD (Active Univ {total_univ})</p></div>", unsafe_allow_html=True)
 
 with hero_col2:
     with st.container(border=True):
         st.markdown("<div class='card-title' style='margin-top: 5px; margin-left: 10px;'>TACTICAL COMMAND CENTER</div>", unsafe_allow_html=True)
         st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Your immediate action plan dynamically dictated by the Momentum Health Score.</div>", unsafe_allow_html=True)
-        st.markdown("<div style='padding: 0px 10px; font-size: 13px;'>" + f"<div style='margin-bottom: 6px;'><b>🎯 Target Asset:</b> <span style='color: #334155;'>{tacs['asset']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>⚖️ Position Sizing:</b> <span style='color: #334155;'>{tacs['sizing']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>🛡️ Risk / Stop-Loss:</b> <span style='color: #334155;'>{tacs['risk']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>💰 Profit Strategy:</b> <span style='color: #334155;'>{tacs['profit']}</span></div>" + "</div>", unsafe_allow_html=True)
+        st.markdown("<div style='padding: 0px 10px; font-size: 13px;'>" + f"<div style='margin-bottom: 6px;'><b>🎯 Target Asset:</b> <span style='color: #334155;'>{tacs['asset']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>⚖️ Position Sizing:</b> <span style='color: #334155;'>{tacs['sizing']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>🛡️ Risk / Stop-Loss:</b> <span style='color: #334155;'>{tacs['risk']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>💰 Profit Strategy:</b> <span style='color: #334155;'>{tacs['profit']}</span></div></div>", unsafe_allow_html=True)
         st.markdown("<hr style='margin: 8px 0px;'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title' style='margin-left: 10px;'>DECISION ENGINE: KEY REGIME DRIVERS</div>", unsafe_allow_html=True)
         wr_c = "#16a34a" if ft_rate >= 45 else "#dc2626"
         p20_c = "#16a34a" if p_fast >= 50 else "#dc2626"
         p50_c = "#16a34a" if p_mid >= 50 else "#dc2626"
-        regime_html = "<div style='font-size: 12px; margin-bottom: 8px; padding-left: 10px;'>" + f"<div style='margin-bottom: 4px;'>• Follow-Through Rate: <b style='color:{wr_c};'>{ft_rate:.1f}%</b></div>" + f"<div style='margin-bottom: 4px;'>• Fast Breadth (>20 EMA): <b style='color:{p20_c};'>{p_fast:.1f}%</b></div>" + f"<div style='margin-bottom: 4px;'>• Trend Breadth (>50 EMA): <b style='color:{p50_c};'>{p_mid:.1f}%</b></div>" + "</div>"
+        regime_html = "<div style='font-size: 12px; margin-bottom: 8px; padding-left: 10px;'>" + f"<div style='margin-bottom: 4px;'>• Follow-Through Rate: <b style='color:{wr_c};'>{ft_rate:.1f}%</b></div>" + f"<div style='margin-bottom: 4px;'>• Fast Breadth (>20 EMA): <b style='color:{p20_c};'>{p_fast:.1f}%</b></div>" + f"<div style='margin-bottom: 4px;'>• Trend Breadth (>50 EMA): <b style='color:{p50_c};'>{p_mid:.1f}%</b></div></div>"
         extremes = []
         latest_trin = latest.get("TRIN", np.nan)
         if not pd.isna(latest_trin):
