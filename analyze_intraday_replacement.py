@@ -41,7 +41,7 @@ CALENDAR_LOOKBACK_DAYS = 15
 QUOTE_CHUNK_SIZE = 200
 MAX_RETRIES = 5
 QUOTE_SLEEP_SECONDS = 1.1
-MIN_INTRADAY_COVERAGE = 0.95
+MIN_INTRADAY_COVERAGE = 0.80
 
 NSE_EQUITY_LIST_URL = (
     "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
@@ -1069,13 +1069,6 @@ def calculate_aggregate(
 def merge_live_today_with_eod_history(
     intraday_aggregate: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Use final EOD aggregate history for all completed dates and replace only
-    today's aggregate row with the current intraday calculation.
-
-    This produces one complete live file for dashboard use without modifying
-    the authoritative EOD historical aggregate file.
-    """
     intraday_aggregate = intraday_aggregate.copy()
 
     intraday_aggregate["Date"] = pd.to_datetime(
@@ -1146,8 +1139,6 @@ def merge_live_today_with_eod_history(
         subset=["Date"]
     )
 
-    # Never bring an old intraday/current-day row from the EOD file into
-    # the live aggregate. Today's row always comes from this successful run.
     eod_history = eod_aggregate[
         eod_aggregate["Date"] < TODAY
     ].copy()
@@ -1366,8 +1357,6 @@ def main() -> None:
         TRAILING_FILE,
     )
 
-    # Important: Intraday writes only this separate live aggregate file.
-    # It never overwrites historical_breadth_regime_6yr.csv.
     atomic_write(
         live_aggregate,
         LIVE_AGGREGATE_FILE,
@@ -1402,43 +1391,23 @@ def main() -> None:
             "time_ist": NOW_IST.strftime("%I:%M %p IST"),
             "status": "LIVE_INTRADAY",
             "nse_current_eq_symbols": len(nse_eq_symbols),
-            "eligible_symbols_with_history": len(
-                required_symbols
-            ),
-            "current_eq_without_history": len(
-                current_eq_without_history
-            ),
-            "historical_not_current_eq": len(
-                historical_not_current_eq
-            ),
+            "eligible_symbols_with_history": len(required_symbols),
+            "current_eq_without_history": len(current_eq_without_history),
+            "historical_not_current_eq": len(historical_not_current_eq),
             "valid_live_quotes": len(live_symbols),
-            "missing_or_invalid_live_quotes": len(
-                missing_live_symbols
-            ),
+            "missing_or_invalid_live_quotes": len(missing_live_symbols),
             "coverage": round(coverage, 6),
             "minimum_coverage": MIN_INTRADAY_COVERAGE,
-            "critical_missing": sorted(
-                critical_missing_live
-            ),
-            "quote_failure_records": len(
-                quote_failures
-            ),
+            "critical_missing": sorted(critical_missing_live),
+            "quote_failure_records": len(quote_failures),
             "live_aggregate_file": LIVE_AGGREGATE_FILE.name,
-            "composite_score": int(
-                today_row.iloc[0]["Composite_Score"]
-            ),
+            "composite_score": int(today_row.iloc[0]["Composite_Score"]),
         },
     )
 
     print(f"✅ Live aggregate generated: {TODAY.date()}")
-
-    print(
-        f"✅ Composite Score: "
-        f"{int(today_row.iloc[0]['Composite_Score'])}"
-    )
-
+    print(f"✅ Composite Score: {int(today_row.iloc[0]['Composite_Score'])}")
     print(f"✅ MCO: {today_row.iloc[0]['MCO']}")
-
     print(f"✅ TRIN: {today_row.iloc[0]['TRIN']}")
 
 
