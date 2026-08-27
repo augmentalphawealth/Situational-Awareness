@@ -3,10 +3,13 @@ name: EOD Update
 on:
   workflow_dispatch:
   schedule:
-    # 03:30 UTC = 09:00 AM IST
+    # 03:30 UTC = 09:00 AM IST.
+    # Recovery-only run for a previously missed completed market date.
     - cron: "30 3 * * 1-5"
-    # 10:30 UTC = 04:00 PM IST
-    - cron: "30 10 * * 1-5"
+
+    # 12:00 UTC = 05:30 PM IST.
+    # After fetch_eod_6yr.py's 05:00 PM IST finalization gate.
+    - cron: "0 12 * * 1-5"
 
 permissions:
   contents: write
@@ -19,7 +22,7 @@ jobs:
   update-eod:
     name: Fetch and analyse EOD market data
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       - name: Checkout repository
