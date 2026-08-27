@@ -84,9 +84,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Add only files that actually exist
           files_to_add=()
-          for f in live_intraday_aggregate.csv trailing_cache.parquet live_intraday.parquet dashboard_data.parquet live_intraday_breadth.csv last_sync.txt intraday_audits; do
+
+          for f in live_intraday_aggregate.csv live_intraday_breadth.csv live_intraday.parquet trailing_cache.parquet last_sync.txt intraday_audits; do
             if [ -e "$f" ]; then
               files_to_add+=("$f")
             fi
