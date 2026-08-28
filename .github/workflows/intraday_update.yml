@@ -6,13 +6,14 @@ on:
   schedule:
     # GitHub Actions cron uses UTC.
     # 03:45–10:00 UTC = 09:15 AM–03:30 PM IST.
-    # Runs every 15 minutes on Monday–Friday.
+    # Runs every 15 minutes, Monday–Friday.
     - cron: "*/15 3-10 * * 1-5"
 
 permissions:
   contents: write
 
 concurrency:
+  # One writer at a time for EOD, intraday, and corporate-action jobs.
   group: market-data-write
   cancel-in-progress: false
 
@@ -86,7 +87,13 @@ jobs:
 
           files_to_add=()
 
-          for f in live_intraday_aggregate.csv live_intraday_breadth.csv live_intraday.parquet trailing_cache.parquet last_sync.txt intraday_audits; do
+          for f in \
+            live_intraday_aggregate.csv \
+            live_intraday_breadth.csv \
+            live_intraday.parquet \
+            dashboard_data.parquet \
+            last_sync.txt \
+            intraday_audits; do
             if [ -e "$f" ]; then
               files_to_add+=("$f")
             fi
