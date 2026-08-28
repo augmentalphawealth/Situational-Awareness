@@ -13,18 +13,23 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
-from kiteconnect import KiteConnect
+
+from kite_helper import get_kite_client, fetch_with_backoff
 
 
 IST = ZoneInfo("Asia/Kolkata")
 EOD_TIME = datetime.time(17, 0)
 
 QUOTE_CHUNK_SIZE = 200
-MAX_RETRIES = 5
-QUOTE_SLEEP_SECONDS = 1.1
-HISTORY_SLEEP_SECONDS = 1.5
+NSE_DOWNLOAD_MAX_RETRIES = 5
 CALENDAR_LOOKBACK_DAYS = 15
 BACKUP_RETENTION = 14
+
+# Safety ceiling: beyond this many trading days of gap, refuse to auto-heal.
+# A gap this large usually means something structural is wrong (token dead
+# for a week, workflow disabled, etc.) — that deserves manual investigation,
+# not an unattended multi-hour API hammering session.
+GAP_TRADING_DAYS_LIMIT = 10
 
 MIN_EOD_COVERAGE = 0.97
 NSE_EQUITY_LIST_URL = (
@@ -89,7 +94,8 @@ def read_lock(path):
         with open(path, "r", encoding="utf-8") as handle:
             for line in handle:
                 if "=" in line:
-                    key, value = line.rstrip("\n").split("=", 1)
+                    key, value = line.rstrip("
+").split("=", 1)
                     values[key] = value
     except OSError as exc:
         die(f"Cannot read lock file: {exc}")
@@ -130,9 +136,12 @@ def acquire_lock(path):
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             now = datetime.datetime.now(IST)
             handle.write(
-                f"pid={os.getpid()}\n"
-                f"host={socket.gethostname()}\n"
-                f"time={now.isoformat()}\n"
+                f"pid={os.getpid()}
+"
+                f"host={socket.gethostname()}
+"
+                f"time={now.isoformat()}
+"
             )
     except FileExistsError:
         die("Another process acquired the lock. Aborting.")
@@ -152,23 +161,16 @@ def release_lock(path):
         print(f"Lock cleanup failed: {exc}")
 
 
-def fetch_retry(fetcher, label, failures):
-    last_error = None
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            return fetcher()
-        except Exception as exc:
-            last_error = exc
-            error_text = str(exc)
-
-            if "429" in error_text or "403" in error_text:
-                time.sleep(2 ** attempt)
-            else:
-                time.sleep(min(2 ** attempt, 8))
-
-    failures.append({"label": label, "error": str(last_error)})
-    return None
+def call_kite(fetch_func, label, failures):
+    """
+    Single entry point for every Kite API call in this file.
+    Delegates pacing and exponential backoff to kite_helper, but preserves
+    the same label/failures audit trail the rest of this script relies on.
+    """
+    result = fetch_with_backoff(fetch_func)
+    if result is None:
+        failures.append({"label": label, "error": "exhausted retries"})
+    return result
 
 
 def download_current_nse_eq_symbols():
@@ -177,10 +179,13 @@ def download_current_nse_eq_symbols():
 
     EQUITY_L.csv is NSE's main equity listing file. SME stocks are maintained
     in a separate SME_EQUITY_L.csv file and are not loaded here.
+
+    This is a plain HTTP call to NSE, not Kite, so it keeps its own retry
+    loop rather than going through kite_helper.
     """
     last_error = None
 
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(NSE_DOWNLOAD_MAX_RETRIES):
         try:
             response = requests.get(
                 NSE_EQUITY_LIST_URL,
@@ -224,7 +229,7 @@ def download_current_nse_eq_symbols():
             sleep_seconds = min(2 ** attempt, 16)
             print(
                 f"Warning: NSE EQUITY_L.csv download failed "
-                f"(attempt {attempt + 1}/{MAX_RETRIES}): {exc}"
+                f"(attempt {attempt + 1}/{NSE_DOWNLOAD_MAX_RETRIES}): {exc}"
             )
             time.sleep(sleep_seconds)
 
@@ -325,7 +330,8 @@ def write_jsonl(path, records):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "".join(
-            json.dumps(record, default=str) + "\n"
+            json.dumps(record, default=str) + "
+"
             for record in records
         ),
         encoding="utf-8",
@@ -356,12 +362,6 @@ def main():
     acquire_lock(LOCK_FILE)
 
     try:
-        api_key = os.environ.get("KITE_API_KEY")
-        access_token = os.environ.get("KITE_ACCESS_TOKEN")
-
-        if not api_key or not access_token:
-            die("KITE_API_KEY or KITE_ACCESS_TOKEN is missing.")
-
         if TMP_PARQUET.exists():
             die(f"Temporary file exists: {TMP_PARQUET}. Inspect it first.")
 
@@ -386,11 +386,10 @@ def main():
         db_max_date = df_hist["Date"].max()
         historical_symbols = set(df_hist["Symbol"]) - {""}
 
-        kite = KiteConnect(api_key=api_key)
-        kite.set_access_token(access_token)
+        kite = get_kite_client()
 
         nifty_failures = []
-        nifty_result = fetch_retry(
+        nifty_result = call_kite(
             lambda: kite.quote(["NSE:NIFTY 50"]),
             "NIFTY quote",
             nifty_failures,
@@ -411,7 +410,7 @@ def main():
             days=CALENDAR_LOOKBACK_DAYS
         )
 
-        calendar = fetch_retry(
+        calendar = call_kite(
             lambda: kite.historical_data(
                 nifty_token,
                 calendar_start.strftime("%Y-%m-%d"),
@@ -457,38 +456,74 @@ def main():
 
         missing_dates = sorted(set(required_dates) - db_dates)
 
+        # The current post-close EOD date is collected via the fast batch
+        # quote() path below. Only genuinely older missing dates go through
+        # the slower per-symbol historical recovery path.
+        historical_missing_dates = [
+            date
+            for date in missing_dates
+            if not (fetch_today and date == latest_market_date)
+        ]
+
+        current_eod_date = (
+            latest_market_date
+            if fetch_today and latest_market_date not in db_dates
+            else None
+        )
+
         print(
             f"Mode={mode}; database_last={db_max_date.date()}; "
             f"latest_market_date={latest_market_date.date()}; "
-            f"missing_dates={[date.date().isoformat() for date in missing_dates]}"
+            f"all_missing_dates={[date.date().isoformat() for date in missing_dates]}"
         )
 
         print(
-            f"Backfill needed: {len(historical_symbols)} symbols × "
-            f"{len(missing_dates)} dates = "
-            f"{len(historical_symbols) * len(missing_dates)} API calls"
+            "Historical recovery dates: "
+            f"{[date.date().isoformat() for date in historical_missing_dates]}"
         )
 
         print(
-            f"Estimated time: "
-            f"{len(historical_symbols) * len(missing_dates) * (HISTORY_SLEEP_SECONDS + 2) / 60:.1f} minutes"
+            "Current EOD date via batch quotes: "
+            f"{current_eod_date.date().isoformat() if current_eod_date is not None else 'None'}"
         )
+
+        if len(historical_missing_dates) > GAP_TRADING_DAYS_LIMIT:
+            die(
+                f"Historical gap of {len(historical_missing_dates)} trading "
+                f"days exceeds the safety limit of {GAP_TRADING_DAYS_LIMIT}. "
+                "This usually means something structural is wrong (dead "
+                "token for an extended period, disabled workflow, etc). "
+                "Refusing to auto-heal. Missing dates: "
+                f"{[d.date().isoformat() for d in historical_missing_dates]}. "
+                "Run the full 6-year rebuild manually after investigating."
+            )
 
         # ------------------------------------------------------------------
-        # Historical backfill: preserve your existing tolerant behavior.
-        # Missing legacy/BE/BZ/delisted names are audited but do not abort.
+        # Historical recovery.
+        #
+        # One historical_data() call per symbol covers the ENTIRE missing
+        # date range in a single request — recovering 1 day or 10 days
+        # costs the same number of API calls. Cost scales with symbol
+        # count (~2 calls/symbol), not with the number of missing dates.
+        # All Kite calls are paced/retried by kite_helper.
         # ------------------------------------------------------------------
         backfill_rows = []
         backfill_failures = []
 
-        if missing_dates:
-            start_missing = min(missing_dates)
-            end_missing = max(missing_dates)
+        if historical_missing_dates:
+            start_missing = min(historical_missing_dates)
+            end_missing = max(historical_missing_dates)
+
+            print(
+                f"Recovering {len(historical_missing_dates)} historical "
+                f"date(s) across {len(historical_symbols)} symbols "
+                f"(~{len(historical_symbols) * 2} Kite calls)."
+            )
 
             for symbol in sorted(historical_symbols):
                 token_failures = []
 
-                token_response = fetch_retry(
+                token_response = call_kite(
                     lambda symbol=symbol: kite.quote([f"NSE:{symbol}"]),
                     f"token {symbol}",
                     token_failures,
@@ -512,7 +547,7 @@ def main():
                     )
                     continue
 
-                candles = fetch_retry(
+                candles = call_kite(
                     lambda token=token: kite.historical_data(
                         token,
                         start_missing.strftime("%Y-%m-%d"),
@@ -524,7 +559,7 @@ def main():
                 )
 
                 temp = candles_to_df(candles, symbol)
-                temp = temp[temp["Date"].isin(missing_dates)]
+                temp = temp[temp["Date"].isin(historical_missing_dates)]
 
                 if temp.empty:
                     backfill_failures.append(
@@ -540,7 +575,9 @@ def main():
 
                 returned_dates = set(temp["Date"])
 
-                for date in sorted(set(missing_dates) - returned_dates):
+                for date in sorted(
+                    set(historical_missing_dates) - returned_dates
+                ):
                     backfill_failures.append(
                         {
                             "Symbol": symbol,
@@ -548,8 +585,6 @@ def main():
                             "Reason": "missing_backfill_candle",
                         }
                     )
-
-                time.sleep(HISTORY_SLEEP_SECONDS)
 
         backfill_df = pd.DataFrame(backfill_rows, columns=REQUIRED_COLUMNS)
 
@@ -562,8 +597,7 @@ def main():
         required_pairs = {
             (symbol, date)
             for symbol in historical_symbols
-            for date in missing_dates
-            if not (fetch_today and date == latest_market_date)
+            for date in historical_missing_dates
         }
 
         missing_pairs = required_pairs - actual_pairs
@@ -579,13 +613,16 @@ def main():
             ]
 
             write_jsonl(
-                AUDIT_DIR / f"backfill_failures_{now.strftime('%Y%m%d_%H%M%S')}.jsonl",
+                AUDIT_DIR / (
+                    f"backfill_failures_{now.strftime('%Y%m%d_%H%M%S')}.jsonl"
+                ),
                 records,
             )
 
             print(
-                f"⚠️ WARNING: Backfill had {len(backfill_failures)} failures "
-                f"and {len(missing_pairs)} missing pairs."
+                f"⚠️ WARNING: Historical backfill had "
+                f"{len(backfill_failures)} failures and "
+                f"{len(missing_pairs)} missing pairs."
             )
 
             print(
@@ -601,9 +638,7 @@ def main():
         )
 
         # ------------------------------------------------------------------
-        # Current EOD fetch:
-        # Use NSE's current mainboard EQ universe, not the historical parquet
-        # universe. This excludes SME and current BE/BZ/non-EQ names.
+        # Current EOD fetch — fast batch quote path, unchanged in structure.
         # ------------------------------------------------------------------
         latest_df = pd.DataFrame(columns=REQUIRED_COLUMNS)
         eod_coverage = None
@@ -613,10 +648,8 @@ def main():
         latest_failures = []
 
         if fetch_today:
-            nse_eq_symbols, nse_eq_df = download_current_nse_eq_symbols()
+            nse_eq_symbols, _ = download_current_nse_eq_symbols()
 
-            # Restrict the requirement to currently listed NSE mainboard EQ names.
-            # Historical data remains untouched for delisted/BE/BZ/legacy stocks.
             eod_required_symbols = nse_eq_symbols
 
             if len(eod_required_symbols) < 1000:
@@ -634,22 +667,31 @@ def main():
             new_nse_symbols = eod_required_symbols - historical_symbols
 
             print(
-                f"Historical-only symbols excluded from today's EQ coverage: "
+                "Historical-only symbols excluded from today's EQ coverage: "
                 f"{len(historical_only)}."
             )
 
             print(
-                f"Current NSE EQ symbols not yet present in historical parquet: "
+                "Current NSE EQ symbols not yet present in historical parquet: "
                 f"{len(new_nse_symbols)}."
             )
 
             latest_rows = []
             symbols = sorted(eod_required_symbols)
 
+            quote_batch_count = (
+                len(symbols) + QUOTE_CHUNK_SIZE - 1
+            ) // QUOTE_CHUNK_SIZE
+
+            print(
+                f"Current EOD quote fetch: {len(symbols)} symbols in "
+                f"{quote_batch_count} batches of up to {QUOTE_CHUNK_SIZE}."
+            )
+
             for start in range(0, len(symbols), QUOTE_CHUNK_SIZE):
                 chunk = symbols[start:start + QUOTE_CHUNK_SIZE]
 
-                result = fetch_retry(
+                result = call_kite(
                     lambda chunk=chunk: kite.quote(
                         [f"NSE:{symbol}" for symbol in chunk]
                     ),
@@ -680,8 +722,6 @@ def main():
                             }
                         )
 
-                time.sleep(QUOTE_SLEEP_SECONDS)
-
             latest_df = pd.DataFrame(latest_rows, columns=REQUIRED_COLUMNS)
 
             if not latest_df.empty:
@@ -696,7 +736,11 @@ def main():
                     keep="last",
                 )
 
-            latest_symbols = set(latest_df["Symbol"]) if not latest_df.empty else set()
+            latest_symbols = (
+                set(latest_df["Symbol"])
+                if not latest_df.empty
+                else set()
+            )
 
             missing_latest = eod_required_symbols - latest_symbols
 
@@ -731,7 +775,9 @@ def main():
                     {
                         "Symbol": symbol,
                         "Date": latest_market_date,
-                        "Reason": "current_nse_eq_symbol_missing_or_invalid_quote",
+                        "Reason": (
+                            "current_nse_eq_symbol_missing_or_invalid_quote"
+                        ),
                     }
                     for symbol in sorted(missing_latest)
                 ]
@@ -760,8 +806,9 @@ def main():
 
             if critical_not_in_eq_universe:
                 die(
-                    "Critical symbols are not present in NSE's current EQ universe: "
-                    f"{sorted(critical_not_in_eq_universe)}. Database unchanged."
+                    "Critical symbols are not present in NSE's current EQ "
+                    f"universe: {sorted(critical_not_in_eq_universe)}. "
+                    "Database unchanged."
                 )
 
             if critical_missing:
@@ -772,28 +819,33 @@ def main():
 
             if eod_coverage < MIN_EOD_COVERAGE:
                 die(
-                    f"EOD coverage below required {MIN_EOD_COVERAGE:.0%}: "
-                    f"{valid_count}/{required_count} ({eod_coverage:.2%}). "
-                    f"Missing={len(missing_latest)}. Database unchanged."
+                    f"EOD coverage below required "
+                    f"{MIN_EOD_COVERAGE:.0%}: "
+                    f"{valid_count}/{required_count} "
+                    f"({eod_coverage:.2%}). "
+                    f"Missing={len(missing_latest)}. "
+                    "Database unchanged."
                 )
 
             if latest_failures:
                 print(
                     f"⚠️ Quote chunk failures: {len(latest_failures)}. "
-                    "Coverage and critical-symbol checks passed, so continuing."
+                    "Coverage and critical-symbol checks passed, "
+                    "so continuing."
                 )
 
             validate_new_data(latest_df, "Latest EOD data")
 
-            # Only replace rows for the symbols that were validly fetched today.
-            # This prevents accidental deletion of existing history for names
-            # that were not available from Zerodha in this EOD run.
             valid_today_symbols = set(latest_df["Symbol"])
 
             working = working[
                 ~(
                     (working["Date"] == latest_market_date)
-                    & (working["Symbol"].isin(valid_today_symbols))
+                    & (
+                        working["Symbol"].isin(
+                            valid_today_symbols
+                        )
+                    )
                 )
             ]
 
@@ -825,7 +877,9 @@ def main():
             f"{now.strftime('%Y%m%d_%H%M%S')}.parquet"
         )
 
-        backup_tmp = backup_path.with_suffix(backup_path.suffix + ".tmp")
+        backup_tmp = backup_path.with_suffix(
+            backup_path.suffix + ".tmp"
+        )
 
         shutil.copy2(PARQUET_FILE, backup_tmp)
 
@@ -840,9 +894,11 @@ def main():
 
         print(
             f"Saved successfully. mode={mode}; "
-            f"recovered_dates={len(missing_dates)}; "
+            f"all_missing_dates={len(missing_dates)}; "
+            f"historical_recovery_dates={len(historical_missing_dates)}; "
             f"today_fetched={fetch_today}; "
-            f"eod_coverage={f'{eod_coverage:.2%}' if eod_coverage is not None else 'N/A'}"
+            f"eod_coverage="
+            f"{f'{eod_coverage:.2%}' if eod_coverage is not None else 'N/A'}"
         )
 
         result = subprocess.run(
@@ -852,20 +908,32 @@ def main():
 
         if result.returncode != 0:
             die(
-                f"analyze_6yr_data.py failed with exit code {result.returncode}. "
-                f"Database updated; backup preserved at {backup_path}."
+                f"analyze_6yr_data.py failed with exit code "
+                f"{result.returncode}. Database updated; backup preserved "
+                f"at {backup_path}."
             )
 
         write_json(
-            AUDIT_DIR / f"eod_run_{now.strftime('%Y%m%d_%H%M%S')}.json",
+            AUDIT_DIR / (
+                f"eod_run_{now.strftime('%Y%m%d_%H%M%S')}.json"
+            ),
             {
                 "mode": mode,
                 "database_before": str(db_max_date.date()),
                 "latest_market_date": str(latest_market_date.date()),
-                "recovered_dates": [
+                "all_missing_dates": [
                     str(date.date())
                     for date in missing_dates
                 ],
+                "historical_recovery_dates": [
+                    str(date.date())
+                    for date in historical_missing_dates
+                ],
+                "current_eod_date": (
+                    str(current_eod_date.date())
+                    if current_eod_date is not None
+                    else None
+                ),
                 "backfill_rows": len(backfill_df),
                 "today_fetched": fetch_today,
                 "backup": str(backup_path),
@@ -890,6 +958,7 @@ def main():
                 "minimum_eod_coverage": MIN_EOD_COVERAGE,
                 "critical_missing": sorted(critical_missing),
                 "quote_chunk_failures": len(latest_failures),
+                "gap_trading_days_limit": GAP_TRADING_DAYS_LIMIT,
             },
         )
 
