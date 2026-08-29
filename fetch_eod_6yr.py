@@ -6,7 +6,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import time
 from io import StringIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -14,8 +13,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 
-from kite_helper import get_kite_client, fetch_with_backoff
-
+from kite_helper import fetch_with_backoff, get_kite_client
 
 IST = ZoneInfo("Asia/Kolkata")
 EOD_TIME = datetime.time(17, 0)
@@ -24,14 +22,9 @@ QUOTE_CHUNK_SIZE = 200
 NSE_DOWNLOAD_MAX_RETRIES = 5
 CALENDAR_LOOKBACK_DAYS = 15
 BACKUP_RETENTION = 14
-
-# Safety ceiling: beyond this many trading days of gap, refuse to auto-heal.
-# A gap this large usually means something structural is wrong (token dead
-# for a week, workflow disabled, etc.) — that deserves manual investigation,
-# not an unattended multi-hour API hammering session.
 GAP_TRADING_DAYS_LIMIT = 10
-
 MIN_EOD_COVERAGE = 0.97
+
 NSE_EQUITY_LIST_URL = (
     "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 )
@@ -50,7 +43,9 @@ LOCK_FILE = Path("eod_sync.lock")
 BACKUP_DIR = Path("eod_backups")
 AUDIT_DIR = Path("eod_audits")
 
-REQUIRED_COLUMNS = ["Symbol", "Date", "Open", "High", "Low", "Close", "Volume"]
+REQUIRED_COLUMNS = [
+    "Symbol", "Date", "Open", "High", "Low", "Close", "Volume"
+]
 
 
 def die(message, code=1):
@@ -94,8 +89,7 @@ def read_lock(path):
         with open(path, "r", encoding="utf-8") as handle:
             for line in handle:
                 if "=" in line:
-                    key, value = line.rstrip("
-").split("=", 1)
+                    key, value = line.rstrip("\n").split("=", 1)
                     values[key] = value
     except OSError as exc:
         die(f"Cannot read lock file: {exc}")
@@ -107,18 +101,14 @@ def acquire_lock(path):
         info = read_lock(path)
         pid_text = info.get("pid")
         host = info.get("host")
-
         if not pid_text:
             die("Lock file has no valid PID. Inspect it manually.")
-
         try:
             pid = int(pid_text)
         except ValueError:
             die("Lock file contains an invalid PID. Inspect it manually.")
-
         if host and host != socket.gethostname():
             die(f"Lock belongs to host {host}; refusing automatic removal.")
-
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
@@ -130,18 +120,14 @@ def acquire_lock(path):
             die(f"Could not verify lock owner PID {pid}: {exc}")
         else:
             die(f"Another EOD process is active: PID {pid}.")
-
     try:
         fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             now = datetime.datetime.now(IST)
             handle.write(
-                f"pid={os.getpid()}
-"
-                f"host={socket.gethostname()}
-"
-                f"time={now.isoformat()}
-"
+                f"pid={os.getpid()}\n"
+                f"host={socket.gethostname()}\n"
+                f"time={now.isoformat()}\n"
             )
     except FileExistsError:
         die("Another process acquired the lock. Aborting.")
@@ -162,11 +148,6 @@ def release_lock(path):
 
 
 def call_kite(fetch_func, label, failures):
-    """
-    Single entry point for every Kite API call in this file.
-    Delegates pacing and exponential backoff to kite_helper, but preserves
-    the same label/failures audit trail the rest of this script relies on.
-    """
     result = fetch_with_backoff(fetch_func)
     if result is None:
         failures.append({"label": label, "error": "exhausted retries"})
@@ -174,17 +155,7 @@ def call_kite(fetch_func, label, failures):
 
 
 def download_current_nse_eq_symbols():
-    """
-    Download NSE mainboard listing file and retain only current EQ-series names.
-
-    EQUITY_L.csv is NSE's main equity listing file. SME stocks are maintained
-    in a separate SME_EQUITY_L.csv file and are not loaded here.
-
-    This is a plain HTTP call to NSE, not Kite, so it keeps its own retry
-    loop rather than going through kite_helper.
-    """
     last_error = None
-
     for attempt in range(NSE_DOWNLOAD_MAX_RETRIES):
         try:
             response = requests.get(
@@ -193,46 +164,33 @@ def download_current_nse_eq_symbols():
                 timeout=30,
             )
             response.raise_for_status()
-
             if not response.text.strip():
                 raise ValueError("NSE EQUITY_L.csv response is empty.")
-
             df = pd.read_csv(StringIO(response.text))
             df.columns = [str(column).strip().upper() for column in df.columns]
-
             required = {"SYMBOL", "SERIES"}
             missing = required - set(df.columns)
             if missing:
                 raise ValueError(
                     f"NSE EQUITY_L.csv missing required columns: {sorted(missing)}"
                 )
-
             df["SYMBOL"] = df["SYMBOL"].map(clean_symbol)
             df["SERIES"] = df["SERIES"].astype(str).str.strip().str.upper()
-
-            eq_df = df[
-                (df["SERIES"] == "EQ")
-                & (df["SYMBOL"] != "")
-            ].copy()
-
+            eq_df = df[(df["SERIES"] == "EQ") & (df["SYMBOL"] != "")]
             symbols = set(eq_df["SYMBOL"])
-
             if len(symbols) < 1000:
                 raise ValueError(
                     f"NSE EQ symbol list looks incomplete: {len(symbols)} symbols."
                 )
-
-            return symbols, eq_df
-
+            return symbols
         except Exception as exc:
             last_error = exc
-            sleep_seconds = min(2 ** attempt, 16)
             print(
                 f"Warning: NSE EQUITY_L.csv download failed "
                 f"(attempt {attempt + 1}/{NSE_DOWNLOAD_MAX_RETRIES}): {exc}"
             )
-            time.sleep(sleep_seconds)
-
+            import time
+            time.sleep(min(2 ** attempt, 16))
     die(f"Could not download reliable NSE EQUITY_L.csv: {last_error}")
 
 
@@ -243,7 +201,6 @@ def is_valid_new_ohlcv(row):
         low_price = float(row["Low"])
         close_price = float(row["Close"])
         volume = float(row["Volume"])
-
         return (
             open_price > 0
             and high_price > 0
@@ -262,10 +219,8 @@ def validate_existing_structure(df):
     missing = set(REQUIRED_COLUMNS) - set(df.columns)
     if missing:
         die(f"Existing database missing columns: {sorted(missing)}")
-
     if df["Date"].isna().any():
         die("Existing database contains invalid dates.")
-
     if df.duplicated(["Symbol", "Date"]).any():
         die("Existing database contains duplicate Symbol/Date keys.")
 
@@ -274,40 +229,28 @@ def validate_new_data(df, name):
     missing = set(REQUIRED_COLUMNS) - set(df.columns)
     if missing:
         die(f"{name} missing columns: {sorted(missing)}")
-
     if df["Date"].isna().any():
         die(f"{name} contains invalid dates.")
-
     if df.duplicated(["Symbol", "Date"]).any():
         die(f"{name} contains duplicate Symbol/Date keys.")
-
-    valid = df.apply(is_valid_new_ohlcv, axis=1)
-    if not valid.all():
+    if not df.apply(is_valid_new_ohlcv, axis=1).all():
         die(f"{name} contains invalid newly fetched OHLCV rows.")
 
 
 def candles_to_df(candles, symbol):
     if not candles:
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
-
     df = pd.DataFrame(candles).rename(
         columns={
-            "date": "Date",
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume",
+            "date": "Date", "open": "Open", "high": "High",
+            "low": "Low", "close": "Close", "volume": "Volume",
         }
     )
-
     history_columns = ["Date", "Open", "High", "Low", "Close", "Volume"]
     if set(history_columns) - set(df.columns):
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
-
     df["Date"] = df["Date"].apply(normalize_date)
     df["Symbol"] = clean_symbol(symbol)
-
     return (
         df[REQUIRED_COLUMNS]
         .sort_values(["Symbol", "Date"])
@@ -317,23 +260,15 @@ def candles_to_df(candles, symbol):
 
 def write_json(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, default=str),
-        encoding="utf-8",
-    )
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
 
 
 def write_jsonl(path, records):
     if not records:
         return
-
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "".join(
-            json.dumps(record, default=str) + "
-"
-            for record in records
-        ),
+        "".join(json.dumps(record, default=str) + "\n" for record in records),
         encoding="utf-8",
     )
 
@@ -344,7 +279,6 @@ def rotate_backups():
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
-
     for path in backups[BACKUP_RETENTION:]:
         try:
             path.unlink()
@@ -355,37 +289,28 @@ def rotate_backups():
 def main():
     now = datetime.datetime.now(IST)
     today = normalize_date(now)
-    is_weekday = now.weekday() < 5
-    fetch_today = is_weekday and now.time() >= EOD_TIME
+    fetch_today = now.weekday() < 5 and now.time() >= EOD_TIME
     mode = "eod" if fetch_today else "recovery_only"
-
     acquire_lock(LOCK_FILE)
-
     try:
         if TMP_PARQUET.exists():
             die(f"Temporary file exists: {TMP_PARQUET}. Inspect it first.")
-
         if not PARQUET_FILE.exists():
             die(f"Master database not found: {PARQUET_FILE}")
 
         source_hash = sha256_file(PARQUET_FILE)
         if source_hash is None:
             die("Could not hash source parquet.")
-
         df_hist = pd.read_parquet(PARQUET_FILE)
-
         if sha256_file(PARQUET_FILE) != source_hash:
             die("Source parquet changed while being loaded.")
-
         validate_existing_structure(df_hist)
-
         df_hist["Date"] = df_hist["Date"].apply(normalize_date)
         df_hist["Symbol"] = df_hist["Symbol"].map(clean_symbol)
 
         db_dates = set(df_hist["Date"])
         db_max_date = df_hist["Date"].max()
         historical_symbols = set(df_hist["Symbol"]) - {""}
-
         kite = get_kite_client()
 
         nifty_failures = []
@@ -394,22 +319,17 @@ def main():
             "NIFTY quote",
             nifty_failures,
         )
-
         nifty_data = nifty_result.get("NSE:NIFTY 50") if nifty_result else None
         if not nifty_data:
             die("Could not retrieve NIFTY 50 quote.")
 
         last_trade_date = normalize_date(nifty_data.get("last_trade_time"))
         nifty_token = nifty_data.get("instrument_token")
-
         if not nifty_token:
             die("NIFTY instrument token is missing.")
 
         calendar_failures = []
-        calendar_start = db_max_date - datetime.timedelta(
-            days=CALENDAR_LOOKBACK_DAYS
-        )
-
+        calendar_start = db_max_date - datetime.timedelta(days=CALENDAR_LOOKBACK_DAYS)
         calendar = call_kite(
             lambda: kite.historical_data(
                 nifty_token,
@@ -420,7 +340,6 @@ def main():
             "NIFTY trading calendar",
             calendar_failures,
         )
-
         if not calendar or calendar_failures:
             die("Could not retrieve a reliable NIFTY trading calendar.")
 
@@ -431,16 +350,15 @@ def main():
                 if valid_date(normalize_date(candle.get("date")))
             }
         )
-
         if not market_dates:
             die("NIFTY historical calendar returned no valid dates.")
 
         latest_calendar_date = market_dates[-1]
-
-        if valid_date(last_trade_date) and last_trade_date > latest_calendar_date:
-            latest_market_date = last_trade_date
-        else:
-            latest_market_date = latest_calendar_date
+        latest_market_date = (
+            last_trade_date
+            if valid_date(last_trade_date) and last_trade_date > latest_calendar_date
+            else latest_calendar_date
+        )
 
         if fetch_today and latest_market_date < today:
             die(
@@ -449,22 +367,14 @@ def main():
             )
 
         required_dates = [
-            date
-            for date in market_dates
+            date for date in market_dates
             if db_max_date < date <= latest_market_date
         ]
-
         missing_dates = sorted(set(required_dates) - db_dates)
-
-        # The current post-close EOD date is collected via the fast batch
-        # quote() path below. Only genuinely older missing dates go through
-        # the slower per-symbol historical recovery path.
         historical_missing_dates = [
-            date
-            for date in missing_dates
+            date for date in missing_dates
             if not (fetch_today and date == latest_market_date)
         ]
-
         current_eod_date = (
             latest_market_date
             if fetch_today and latest_market_date not in db_dates
@@ -474,14 +384,12 @@ def main():
         print(
             f"Mode={mode}; database_last={db_max_date.date()}; "
             f"latest_market_date={latest_market_date.date()}; "
-            f"all_missing_dates={[date.date().isoformat() for date in missing_dates]}"
+            f"all_missing_dates={[d.date().isoformat() for d in missing_dates]}"
         )
-
         print(
             "Historical recovery dates: "
-            f"{[date.date().isoformat() for date in historical_missing_dates]}"
+            f"{[d.date().isoformat() for d in historical_missing_dates]}"
         )
-
         print(
             "Current EOD date via batch quotes: "
             f"{current_eod_date.date().isoformat() if current_eod_date is not None else 'None'}"
@@ -489,62 +397,39 @@ def main():
 
         if len(historical_missing_dates) > GAP_TRADING_DAYS_LIMIT:
             die(
-                f"Historical gap of {len(historical_missing_dates)} trading "
-                f"days exceeds the safety limit of {GAP_TRADING_DAYS_LIMIT}. "
-                "This usually means something structural is wrong (dead "
-                "token for an extended period, disabled workflow, etc). "
-                "Refusing to auto-heal. Missing dates: "
-                f"{[d.date().isoformat() for d in historical_missing_dates]}. "
-                "Run the full 6-year rebuild manually after investigating."
+                f"Historical gap of {len(historical_missing_dates)} trading days "
+                f"exceeds safety limit {GAP_TRADING_DAYS_LIMIT}. Missing dates: "
+                f"{[d.date().isoformat() for d in historical_missing_dates]}."
             )
 
-        # ------------------------------------------------------------------
-        # Historical recovery.
-        #
-        # One historical_data() call per symbol covers the ENTIRE missing
-        # date range in a single request — recovering 1 day or 10 days
-        # costs the same number of API calls. Cost scales with symbol
-        # count (~2 calls/symbol), not with the number of missing dates.
-        # All Kite calls are paced/retried by kite_helper.
-        # ------------------------------------------------------------------
         backfill_rows = []
         backfill_failures = []
-
         if historical_missing_dates:
             start_missing = min(historical_missing_dates)
             end_missing = max(historical_missing_dates)
-
             print(
-                f"Recovering {len(historical_missing_dates)} historical "
-                f"date(s) across {len(historical_symbols)} symbols "
+                f"Recovering {len(historical_missing_dates)} historical date(s) "
+                f"across {len(historical_symbols)} symbols "
                 f"(~{len(historical_symbols) * 2} Kite calls)."
             )
-
             for symbol in sorted(historical_symbols):
                 token_failures = []
-
                 token_response = call_kite(
                     lambda symbol=symbol: kite.quote([f"NSE:{symbol}"]),
                     f"token {symbol}",
                     token_failures,
                 )
-
                 token_data = (
                     token_response.get(f"NSE:{symbol}")
-                    if token_response
-                    else None
+                    if token_response else None
                 )
-
                 token = token_data.get("instrument_token") if token_data else None
-
                 if token_failures or not token:
-                    backfill_failures.append(
-                        {
-                            "Symbol": symbol,
-                            "Reason": "instrument_token_failure",
-                            "Failures": token_failures,
-                        }
-                    )
+                    backfill_failures.append({
+                        "Symbol": symbol,
+                        "Reason": "instrument_token_failure",
+                        "Failures": token_failures,
+                    })
                     continue
 
                 candles = call_kite(
@@ -557,49 +442,34 @@ def main():
                     f"backfill {symbol}",
                     backfill_failures,
                 )
-
                 temp = candles_to_df(candles, symbol)
                 temp = temp[temp["Date"].isin(historical_missing_dates)]
-
                 if temp.empty:
-                    backfill_failures.append(
-                        {
-                            "Symbol": symbol,
-                            "Reason": "empty_backfill_response",
-                        }
-                    )
+                    backfill_failures.append({
+                        "Symbol": symbol,
+                        "Reason": "empty_backfill_response",
+                    })
                     continue
-
                 temp = temp[temp.apply(is_valid_new_ohlcv, axis=1)]
                 backfill_rows.extend(temp.to_dict("records"))
-
                 returned_dates = set(temp["Date"])
-
-                for date in sorted(
-                    set(historical_missing_dates) - returned_dates
-                ):
-                    backfill_failures.append(
-                        {
-                            "Symbol": symbol,
-                            "Date": date,
-                            "Reason": "missing_backfill_candle",
-                        }
-                    )
+                for date in sorted(set(historical_missing_dates) - returned_dates):
+                    backfill_failures.append({
+                        "Symbol": symbol,
+                        "Date": date,
+                        "Reason": "missing_backfill_candle",
+                    })
 
         backfill_df = pd.DataFrame(backfill_rows, columns=REQUIRED_COLUMNS)
-
         actual_pairs = (
             set(zip(backfill_df["Symbol"], backfill_df["Date"]))
-            if not backfill_df.empty
-            else set()
+            if not backfill_df.empty else set()
         )
-
         required_pairs = {
             (symbol, date)
             for symbol in historical_symbols
             for date in historical_missing_dates
         }
-
         missing_pairs = required_pairs - actual_pairs
 
         if backfill_failures or missing_pairs:
@@ -611,35 +481,21 @@ def main():
                 }
                 for symbol, date in sorted(missing_pairs)
             ]
-
             write_jsonl(
-                AUDIT_DIR / (
-                    f"backfill_failures_{now.strftime('%Y%m%d_%H%M%S')}.jsonl"
-                ),
+                AUDIT_DIR / f"backfill_failures_{now.strftime('%Y%m%d_%H%M%S')}.jsonl",
                 records,
             )
-
             print(
-                f"⚠️ WARNING: Historical backfill had "
-                f"{len(backfill_failures)} failures and "
-                f"{len(missing_pairs)} missing pairs."
-            )
-
-            print(
-                "⚠️ Failing historical symbols were logged to the audit file. "
-                "Continuing with available data."
+                f"⚠️ Historical recovery had {len(backfill_failures)} failures "
+                f"and {len(missing_pairs)} missing pairs; continuing."
             )
 
         working = pd.concat([df_hist, backfill_df], ignore_index=True)
-
         working = (
             working.sort_values(["Symbol", "Date"])
             .drop_duplicates(["Symbol", "Date"], keep="last")
         )
 
-        # ------------------------------------------------------------------
-        # Current EOD fetch — fast batch quote path, unchanged in structure.
-        # ------------------------------------------------------------------
         latest_df = pd.DataFrame(columns=REQUIRED_COLUMNS)
         eod_coverage = None
         eod_required_symbols = set()
@@ -648,110 +504,50 @@ def main():
         latest_failures = []
 
         if fetch_today:
-            nse_eq_symbols, _ = download_current_nse_eq_symbols()
-
-            eod_required_symbols = nse_eq_symbols
-
+            eod_required_symbols = download_current_nse_eq_symbols()
             if len(eod_required_symbols) < 1000:
-                die(
-                    "Current NSE EQ universe is unexpectedly small. "
-                    "Refusing EOD update."
-                )
-
-            print(
-                f"Current NSE mainboard EQ universe: "
-                f"{len(eod_required_symbols)} symbols."
-            )
-
-            historical_only = historical_symbols - eod_required_symbols
-            new_nse_symbols = eod_required_symbols - historical_symbols
-
-            print(
-                "Historical-only symbols excluded from today's EQ coverage: "
-                f"{len(historical_only)}."
-            )
-
-            print(
-                "Current NSE EQ symbols not yet present in historical parquet: "
-                f"{len(new_nse_symbols)}."
-            )
+                die("Current NSE EQ universe is unexpectedly small. Refusing EOD update.")
+            print(f"Current NSE mainboard EQ universe: {len(eod_required_symbols)} symbols.")
 
             latest_rows = []
             symbols = sorted(eod_required_symbols)
-
-            quote_batch_count = (
-                len(symbols) + QUOTE_CHUNK_SIZE - 1
-            ) // QUOTE_CHUNK_SIZE
-
-            print(
-                f"Current EOD quote fetch: {len(symbols)} symbols in "
-                f"{quote_batch_count} batches of up to {QUOTE_CHUNK_SIZE}."
-            )
+            quote_batches = (len(symbols) + QUOTE_CHUNK_SIZE - 1) // QUOTE_CHUNK_SIZE
+            print(f"Current EOD quote fetch: {len(symbols)} symbols in {quote_batches} batches.")
 
             for start in range(0, len(symbols), QUOTE_CHUNK_SIZE):
                 chunk = symbols[start:start + QUOTE_CHUNK_SIZE]
-
                 result = call_kite(
-                    lambda chunk=chunk: kite.quote(
-                        [f"NSE:{symbol}" for symbol in chunk]
-                    ),
+                    lambda chunk=chunk: kite.quote([f"NSE:{symbol}" for symbol in chunk]),
                     f"latest quotes {start // QUOTE_CHUNK_SIZE + 1}",
                     latest_failures,
                 )
-
                 if result:
                     for instrument_key, data in result.items():
-                        symbol = clean_symbol(
-                            instrument_key.replace("NSE:", "", 1)
-                        )
-
+                        symbol = clean_symbol(instrument_key.replace("NSE:", "", 1))
                         if symbol not in eod_required_symbols:
                             continue
-
                         ohlc = data.get("ohlc") or {}
-
-                        latest_rows.append(
-                            {
-                                "Date": latest_market_date,
-                                "Open": ohlc.get("open", 0),
-                                "High": ohlc.get("high", 0),
-                                "Low": ohlc.get("low", 0),
-                                "Close": data.get("last_price", 0),
-                                "Volume": data.get("volume", 0),
-                                "Symbol": symbol,
-                            }
-                        )
+                        latest_rows.append({
+                            "Date": latest_market_date,
+                            "Open": ohlc.get("open", 0),
+                            "High": ohlc.get("high", 0),
+                            "Low": ohlc.get("low", 0),
+                            "Close": data.get("last_price", 0),
+                            "Volume": data.get("volume", 0),
+                            "Symbol": symbol,
+                        })
 
             latest_df = pd.DataFrame(latest_rows, columns=REQUIRED_COLUMNS)
-
             if not latest_df.empty:
                 latest_df["Symbol"] = latest_df["Symbol"].map(clean_symbol)
+                latest_df = latest_df[latest_df.apply(is_valid_new_ohlcv, axis=1)]
+                latest_df = latest_df.drop_duplicates(["Symbol", "Date"], keep="last")
 
-                latest_df = latest_df[
-                    latest_df.apply(is_valid_new_ohlcv, axis=1)
-                ]
-
-                latest_df = latest_df.drop_duplicates(
-                    ["Symbol", "Date"],
-                    keep="last",
-                )
-
-            latest_symbols = (
-                set(latest_df["Symbol"])
-                if not latest_df.empty
-                else set()
-            )
-
+            latest_symbols = set(latest_df["Symbol"]) if not latest_df.empty else set()
             missing_latest = eod_required_symbols - latest_symbols
-
             valid_count = len(latest_symbols)
             required_count = len(eod_required_symbols)
-
-            eod_coverage = (
-                valid_count / required_count
-                if required_count > 0
-                else 0.0
-            )
+            eod_coverage = valid_count / required_count if required_count else 0.0
 
             critical = {
                 clean_symbol(symbol)
@@ -761,135 +557,85 @@ def main():
                 ).split(",")
                 if clean_symbol(symbol)
             }
-
             critical_not_in_eq_universe = critical - eod_required_symbols
             critical_missing = critical & missing_latest
 
-            print(
-                f"Latest valid EQ quotes: {valid_count}/{required_count} "
-                f"({eod_coverage:.2%} coverage)."
-            )
+            print(f"Latest valid EQ quotes: {valid_count}/{required_count} ({eod_coverage:.2%}).")
 
             if missing_latest:
-                audit_records = [
-                    {
-                        "Symbol": symbol,
-                        "Date": latest_market_date,
-                        "Reason": (
-                            "current_nse_eq_symbol_missing_or_invalid_quote"
-                        ),
-                    }
-                    for symbol in sorted(missing_latest)
-                ]
-
-                audit_records.extend(
-                    {
-                        "Failure": failure,
-                        "Date": latest_market_date,
-                        "Reason": "quote_chunk_failure",
-                    }
-                    for failure in latest_failures
-                )
-
                 write_jsonl(
-                    AUDIT_DIR / (
-                        f"latest_eod_missing_eq_"
-                        f"{now.strftime('%Y%m%d_%H%M%S')}.jsonl"
-                    ),
-                    audit_records,
-                )
-
-                print(
-                    f"⚠️ Missing/invalid current NSE EQ quotes: "
-                    f"{len(missing_latest)}. Details saved to eod_audits/."
+                    AUDIT_DIR / f"latest_eod_missing_eq_{now.strftime('%Y%m%d_%H%M%S')}.jsonl",
+                    [
+                        {
+                            "Symbol": symbol,
+                            "Date": latest_market_date,
+                            "Reason": "current_nse_eq_symbol_missing_or_invalid_quote",
+                        }
+                        for symbol in sorted(missing_latest)
+                    ]
+                    + [
+                        {
+                            "Failure": failure,
+                            "Date": latest_market_date,
+                            "Reason": "quote_chunk_failure",
+                        }
+                        for failure in latest_failures
+                    ],
                 )
 
             if critical_not_in_eq_universe:
                 die(
-                    "Critical symbols are not present in NSE's current EQ "
-                    f"universe: {sorted(critical_not_in_eq_universe)}. "
-                    "Database unchanged."
+                    "Critical symbols are not present in NSE current EQ universe: "
+                    f"{sorted(critical_not_in_eq_universe)}. Database unchanged."
                 )
-
             if critical_missing:
                 die(
-                    "Critical EOD symbols missing or invalid: "
-                    f"{sorted(critical_missing)}. Database unchanged."
-                )
-
-            if eod_coverage < MIN_EOD_COVERAGE:
-                die(
-                    f"EOD coverage below required "
-                    f"{MIN_EOD_COVERAGE:.0%}: "
-                    f"{valid_count}/{required_count} "
-                    f"({eod_coverage:.2%}). "
-                    f"Missing={len(missing_latest)}. "
+                    f"Critical EOD symbols missing or invalid: {sorted(critical_missing)}. "
                     "Database unchanged."
                 )
-
-            if latest_failures:
-                print(
-                    f"⚠️ Quote chunk failures: {len(latest_failures)}. "
-                    "Coverage and critical-symbol checks passed, "
-                    "so continuing."
+            if eod_coverage < MIN_EOD_COVERAGE:
+                die(
+                    f"EOD coverage below required {MIN_EOD_COVERAGE:.0%}: "
+                    f"{valid_count}/{required_count} ({eod_coverage:.2%}). "
+                    "Database unchanged."
                 )
 
             validate_new_data(latest_df, "Latest EOD data")
-
             valid_today_symbols = set(latest_df["Symbol"])
-
             working = working[
                 ~(
                     (working["Date"] == latest_market_date)
-                    & (
-                        working["Symbol"].isin(
-                            valid_today_symbols
-                        )
-                    )
+                    & working["Symbol"].isin(valid_today_symbols)
                 )
             ]
-
             working = pd.concat([working, latest_df], ignore_index=True)
 
         if working.duplicated(["Symbol", "Date"]).any():
             die("Combined database contains duplicate Symbol/Date keys.")
-
         if working["Date"].isna().any():
             die("Combined database contains invalid dates.")
 
         working.to_parquet(TMP_PARQUET, index=False)
-
         check_df = pd.read_parquet(TMP_PARQUET)
-
         if check_df.empty or check_df["Date"].isna().any():
             die("Temporary database read-back validation failed.")
-
         if check_df.duplicated(["Symbol", "Date"]).any():
             die("Temporary database contains duplicate keys.")
-
         if sha256_file(PARQUET_FILE) != source_hash:
             die("Source parquet changed before backup. Aborting.")
 
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-
         backup_path = BACKUP_DIR / (
-            f"nse_6yr_historical.backup."
-            f"{now.strftime('%Y%m%d_%H%M%S')}.parquet"
+            f"nse_6yr_historical.backup.{now.strftime('%Y%m%d_%H%M%S')}.parquet"
         )
-
-        backup_tmp = backup_path.with_suffix(
-            backup_path.suffix + ".tmp"
-        )
-
+        backup_tmp = backup_path.with_suffix(backup_path.suffix + ".tmp")
         shutil.copy2(PARQUET_FILE, backup_tmp)
-
         if sha256_file(backup_tmp) != source_hash:
             backup_tmp.unlink(missing_ok=True)
             die("Backup hash mismatch. Original database untouched.")
 
         os.replace(backup_tmp, backup_path)
         os.replace(TMP_PARQUET, PARQUET_FILE)
-
         rotate_backups()
 
         print(
@@ -897,71 +643,43 @@ def main():
             f"all_missing_dates={len(missing_dates)}; "
             f"historical_recovery_dates={len(historical_missing_dates)}; "
             f"today_fetched={fetch_today}; "
-            f"eod_coverage="
-            f"{f'{eod_coverage:.2%}' if eod_coverage is not None else 'N/A'}"
+            f"eod_coverage={f'{eod_coverage:.2%}' if eod_coverage is not None else 'N/A'}"
         )
 
         result = subprocess.run(
             [sys.executable, "analyze_6yr_data.py"],
             check=False,
         )
-
         if result.returncode != 0:
             die(
-                f"analyze_6yr_data.py failed with exit code "
-                f"{result.returncode}. Database updated; backup preserved "
-                f"at {backup_path}."
+                f"analyze_6yr_data.py failed with exit code {result.returncode}. "
+                f"Database updated; backup preserved at {backup_path}."
             )
 
         write_json(
-            AUDIT_DIR / (
-                f"eod_run_{now.strftime('%Y%m%d_%H%M%S')}.json"
-            ),
+            AUDIT_DIR / f"eod_run_{now.strftime('%Y%m%d_%H%M%S')}.json",
             {
                 "mode": mode,
                 "database_before": str(db_max_date.date()),
                 "latest_market_date": str(latest_market_date.date()),
-                "all_missing_dates": [
-                    str(date.date())
-                    for date in missing_dates
-                ],
-                "historical_recovery_dates": [
-                    str(date.date())
-                    for date in historical_missing_dates
-                ],
-                "current_eod_date": (
-                    str(current_eod_date.date())
-                    if current_eod_date is not None
-                    else None
-                ),
+                "all_missing_dates": [str(date.date()) for date in missing_dates],
+                "historical_recovery_dates": [str(date.date()) for date in historical_missing_dates],
+                "current_eod_date": str(current_eod_date.date()) if current_eod_date is not None else None,
                 "backfill_rows": len(backfill_df),
                 "today_fetched": fetch_today,
                 "backup": str(backup_path),
                 "backfill_failures": len(backfill_failures),
                 "missing_pairs": len(missing_pairs),
                 "nse_current_eq_symbols": len(eod_required_symbols),
-                "latest_valid_eq_symbols": (
-                    len(latest_df)
-                    if fetch_today
-                    else None
-                ),
-                "latest_missing_eq_symbols": (
-                    len(missing_latest)
-                    if fetch_today
-                    else None
-                ),
-                "latest_eod_coverage": (
-                    round(eod_coverage, 6)
-                    if eod_coverage is not None
-                    else None
-                ),
+                "latest_valid_eq_symbols": len(latest_df) if fetch_today else None,
+                "latest_missing_eq_symbols": len(missing_latest) if fetch_today else None,
+                "latest_eod_coverage": round(eod_coverage, 6) if eod_coverage is not None else None,
                 "minimum_eod_coverage": MIN_EOD_COVERAGE,
                 "critical_missing": sorted(critical_missing),
                 "quote_chunk_failures": len(latest_failures),
                 "gap_trading_days_limit": GAP_TRADING_DAYS_LIMIT,
             },
         )
-
     finally:
         release_lock(LOCK_FILE)
 
