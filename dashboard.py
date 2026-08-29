@@ -216,7 +216,7 @@ live_time_label = ""
 if not live_breadth_today.empty:
     live_latest = live_breadth_today.iloc[-1]
     raw_time = str(live_latest.get("Time", "")).strip()
-    if raw_time:
+    if raw_time and raw_time.lower() != "nan":
         try:
             live_time_label = datetime.datetime.strptime(raw_time, "%H:%M").strftime("%I:%M %p")
         except Exception:
@@ -226,17 +226,21 @@ full_live_available = not live_aggregate_today.empty
 is_live_active = (
     not eod_for_today_available
     and full_live_available
+    and not live_breadth_today.empty
+    and bool(live_time_label)
     and is_market_window
 )
 post_close_intraday_pending = (
     not eod_for_today_available
     and full_live_available
+    and not live_breadth_today.empty
+    and bool(live_time_label)
     and is_weekday
     and now_ist > market_close
 )
 
-# EOD remains authoritative. If it has not yet written today's row, append
-# the complete live aggregate for today so every dashboard metric is current.
+# EOD remains authoritative. Before today's EOD row exists, use today's
+# complete intraday aggregate only for the current live dashboard view.
 df_agg = df_eod.copy()
 if not eod_for_today_available and full_live_available:
     df_agg = pd.concat(
@@ -248,17 +252,6 @@ if not eod_for_today_available and full_live_available:
         sort=False,
     )
     df_agg = df_agg.sort_values("Date").drop_duplicates("Date", keep="last").reset_index(drop=True)
-
-if eod_for_today_available:
-    last_sync_display = f"{last_sync_time} (EOD Finalized)"
-elif is_live_active:
-    last_sync_display = f"Today, {live_time_label} IST (Live Intraday)"
-elif post_close_intraday_pending:
-    last_sync_display = f"Today, {live_time_label} IST (Intraday Close Snapshot — EOD Processing Pending)"
-elif full_live_available:
-    last_sync_display = f"Today, {live_time_label} IST (Latest Intraday Snapshot)"
-else:
-    last_sync_display = f"{last_sync_time} (EOD)"
 
 unique_dates = df_agg["Date"].sort_values().unique()
 min_date = pd.to_datetime(unique_dates[0])
@@ -283,6 +276,14 @@ def step_next_day():
         st.session_state.analysis_date = pd.to_datetime(unique_dates[curr_idx[0] + 1])
 
 
+def status_for_selected_date(selected_date):
+    """Show a timestamp only when the selected view is valid live intraday data."""
+    selected_date = pd.Timestamp(selected_date).normalize()
+    if selected_date == today_ist and is_live_active:
+        return f"Live Intraday: {today_ist.strftime('%d %B %Y')}, {live_time_label} IST"
+    return f"EOD Data: {selected_date.strftime('%d %B %Y')}"
+
+
 head_col1, head_spacer, head_col2, head_col3 = st.columns([3.0, 0.5, 2.0, 1.2])
 with head_col1:
     st.markdown("<h2 style='margin-top: 10px; margin-bottom: 0px; font-weight: 800; color: #0f172a; white-space: nowrap; font-size: 24px;'>🛡️ SITUATIONAL AWARENESS</h2>", unsafe_allow_html=True)
@@ -301,8 +302,8 @@ with head_col2:
     with nav3:
         st.button("Next ▶", on_click=step_next_day, use_container_width=True)
 with head_col3:
-    display_sync = last_sync_display if st.session_state.analysis_date == max_date else "Historical View"
-    st.markdown(f"<div style='text-align: right; font-size: 11px; font-weight: 600; color: #64748b; margin-top: 2px; margin-bottom: 3px;'>Last Sync: {display_sync}</div>", unsafe_allow_html=True)
+    display_sync = status_for_selected_date(st.session_state.analysis_date)
+    st.markdown(f"<div style='text-align: right; font-size: 11px; font-weight: 600; color: #64748b; margin-top: 2px; margin-bottom: 3px;'>{display_sync}</div>", unsafe_allow_html=True)
 
     if st.session_state.sync_in_progress:
         elapsed_time = time.time() - st.session_state.sync_start_time
@@ -771,7 +772,8 @@ else:
 st.markdown("<br><hr>", unsafe_allow_html=True)
 bot_col, _ = st.columns([1.5, 4])
 with bot_col:
-    st.markdown(f"<div style='text-align: center; font-size: 11px; color: #94a3b8; margin-bottom: 5px;'>Last Successful Database Update: {last_sync_display}</div>", unsafe_allow_html=True)
+    footer_status = status_for_selected_date(st.session_state.analysis_date)
+    st.markdown(f"<div style='text-align: center; font-size: 11px; color: #94a3b8; margin-bottom: 5px;'>{footer_status}</div>", unsafe_allow_html=True)
     if not st.session_state.sync_in_progress:
         if st.button("📅 Run End of Day Analytics", use_container_width=True):
             if trigger_github_action("eod_update.yml", "EOD Sync"):
