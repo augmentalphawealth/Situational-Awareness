@@ -32,6 +32,7 @@ MAX_SYMBOL_REFRESHES = int(
     os.environ.get("CORPORATE_ACTION_MAX_SYMBOL_REFRESHES", "50")
 )
 BACKUP_RETENTION = int(os.environ.get("CORPORATE_ACTION_BACKUP_RETENTION", "14"))
+MAX_KITE_HISTORY_DAYS = 1800
 
 
 def die(message, code=1):
@@ -223,11 +224,10 @@ def get_current_token(kite, symbol, failures):
         failures,
     )
     data = quote.get(f"NSE:{symbol}") if quote else None
-    token = data.get("instrument_token") if data else None
-    return token
+    return data.get("instrument_token") if data else None
 
 
-def fetch_history(kite, token, symbol, start_date, end_date, failures):
+def fetch_history_window(kite, token, symbol, start_date, end_date, failures):
     candles = call_kite(
         lambda: kite.historical_data(
             token,
@@ -235,14 +235,45 @@ def fetch_history(kite, token, symbol, start_date, end_date, failures):
             end_date.strftime("%Y-%m-%d"),
             "day",
         ),
-        f"historical data {symbol}",
+        f"historical data {symbol} {start_date.date()} to {end_date.date()}",
         failures,
     )
     df = candles_to_df(candles, symbol)
     if df.empty:
         return df
     df = df[df["Date"].notna()].copy()
-    return df[df.apply(lambda row: valid_ohlcv(pd.DataFrame([row])).iloc[0], axis=1)]
+    return df[valid_ohlcv(df)].copy()
+
+
+def fetch_full_history_in_chunks(kite, token, symbol, start_date, end_date, failures):
+    """Fetch a complete symbol history without exceeding Kite's 2,000-day limit."""
+    chunks = []
+    chunk_start = start_date
+    while chunk_start <= end_date:
+        chunk_end = min(
+            chunk_start + datetime.timedelta(days=MAX_KITE_HISTORY_DAYS - 1),
+            end_date,
+        )
+        chunk = fetch_history_window(
+            kite,
+            token,
+            symbol,
+            chunk_start,
+            chunk_end,
+            failures,
+        )
+        if chunk.empty:
+            return pd.DataFrame(columns=REQUIRED_COLUMNS)
+        chunks.append(chunk)
+        chunk_start = chunk_end + datetime.timedelta(days=1)
+
+    full_history = pd.concat(chunks, ignore_index=True)
+    full_history = (
+        full_history.sort_values(["Symbol", "Date"])
+        .drop_duplicates(["Symbol", "Date"], keep="last")
+        .reset_index(drop=True)
+    )
+    return full_history
 
 
 def compare_same_dates(stored, fresh, verify_dates):
@@ -318,13 +349,13 @@ def main():
         candidates = []
         candidate_details = []
 
-        for index, symbol in enumerate(symbols, start=1):
+        for symbol in symbols:
             token = get_current_token(kite, symbol, scan_failures)
             if not token:
                 continue
 
             stored_symbol = stored[stored["Symbol"] == symbol].copy()
-            recent_fresh = fetch_history(
+            recent_fresh = fetch_history_window(
                 kite,
                 token,
                 symbol,
@@ -343,8 +374,7 @@ def main():
                 f"{differences['Difference_Pct'].max():.2f}%.",
                 flush=True,
             )
-
-            if len(candidates) > MAX_SYMBOL_REFRESHES:
+            if len(set(candidates)) > MAX_SYMBOL_REFRESHES:
                 die(
                     f"Detected more than {MAX_SYMBOL_REFRESHES} candidates. "
                     "Refusing a broad automatic rewrite; inspect the audit output."
@@ -388,7 +418,7 @@ def main():
                 refresh_failures.append({"Symbol": symbol, "reason": "refresh_token_unavailable"})
                 continue
 
-            history = fetch_history(
+            history = fetch_full_history_in_chunks(
                 kite,
                 token,
                 symbol,
@@ -399,23 +429,19 @@ def main():
             if history.empty:
                 refresh_failures.append({"Symbol": symbol, "reason": "empty_full_history"})
                 continue
-
             if history.duplicated(["Symbol", "Date"]).any():
                 refresh_failures.append({"Symbol": symbol, "reason": "duplicate_full_history"})
                 continue
-
             refreshed_histories[symbol] = history
 
         if refresh_failures:
             write_json(
                 AUDIT_DIR / f"corporate_action_refresh_failures_{audit_stamp}.json",
-                {
-                    "run_time_ist": now.isoformat(),
-                    "failures": refresh_failures,
-                },
+                {"run_time_ist": now.isoformat(), "failures": refresh_failures},
             )
 
-        if set(candidates) - set(refreshed_histories):
+        candidate_symbols = set(candidates)
+        if candidate_symbols - set(refreshed_histories):
             die(
                 "At least one detected candidate could not be fully refreshed. "
                 "Database unchanged; inspect corporate_action_audits/."
@@ -423,10 +449,7 @@ def main():
 
         replacement_symbols = set(refreshed_histories)
         unchanged = stored[~stored["Symbol"].isin(replacement_symbols)].copy()
-        replacement = pd.concat(
-            list(refreshed_histories.values()),
-            ignore_index=True,
-        )
+        replacement = pd.concat(list(refreshed_histories.values()), ignore_index=True)
         combined = pd.concat([unchanged, replacement], ignore_index=True)
         combined["Symbol"] = combined["Symbol"].map(clean_symbol)
         combined["Date"] = combined["Date"].apply(normalize_date)
@@ -473,6 +496,7 @@ def main():
                 "backup": str(backup_path),
                 "scan_failure_count": len(scan_failures),
                 "refresh_failure_count": len(refresh_failures),
+                "max_kite_history_days": MAX_KITE_HISTORY_DAYS,
             },
         )
         print(
