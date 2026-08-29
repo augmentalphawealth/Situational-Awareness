@@ -1,0 +1,101 @@
+name: Corporate Action History Refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 02:45 UTC = 08:15 AM IST, every day including weekends.
+    # This starts after the 08:00 AM IST token-rotation workflow.
+    - cron: "45 2 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  # Must match other market-data writers so Parquet and analysis outputs
+  # are never written concurrently.
+  group: market-data-write
+  cancel-in-progress: false
+
+jobs:
+  corporate-action-refresh:
+    name: Detect and repair corporate-action price revisions
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify Kite credentials
+        env:
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${KITE_API_KEY}" || { echo "KITE_API_KEY is missing."; exit 1; }
+          test -n "${KITE_API_SECRET}" || { echo "KITE_API_SECRET is missing."; exit 1; }
+          test -n "${KITE_ACCESS_TOKEN}" || { echo "KITE_ACCESS_TOKEN is missing."; exit 1; }
+          echo "Kite credentials are available."
+
+      - name: Detect and refresh changed symbol histories
+        env:
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          KITE_ACCESS_TOKEN: ${{ secrets.KITE_ACCESS_TOKEN }}
+          CORPORATE_ACTION_VERIFY_DAYS: "5"
+          CORPORATE_ACTION_THRESHOLD_PCT: "2.0"
+          CORPORATE_ACTION_MAX_SYMBOL_REFRESHES: "50"
+          CORPORATE_ACTION_BACKUP_RETENTION: "14"
+        run: |
+          set -euo pipefail
+          python -u corporate_action_refresh.py
+
+      - name: Commit and push changed data
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          files_to_add=()
+          for path in \
+            nse_6yr_historical.parquet \
+            historical_breadth_regime_6yr.csv \
+            trailing_cache.parquet \
+            corporate_action_audits \
+            corporate_action_backups; do
+            if [ -e "$path" ]; then
+              files_to_add+=("$path")
+            fi
+          done
+
+          if [ ${#files_to_add[@]} -eq 0 ]; then
+            echo "No corporate-action output files found to commit."
+            exit 0
+          fi
+
+          git add "${files_to_add[@]}"
+
+          if git diff --cached --quiet; then
+            echo "No corporate-action changes detected."
+            exit 0
+          fi
+
+          git commit -m "Auto-update: corporate-action historical refresh"
+          git push origin HEAD:main
