@@ -26,23 +26,43 @@ def pct(x):
 
 def process_symbol(g, latest_date):
     g = g.sort_values('Date').copy()
-    if len(g) < 80:
+    if len(g) < 220:
         return None
 
     for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         g[col] = pd.to_numeric(g[col], errors='coerce')
+
     g = g.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'])
-    if len(g) < 80:
+    if len(g) < 220:
         return None
 
     g['TurnoverCalc'] = g['Close'] * g['Volume']
     g['ADV20'] = g['TurnoverCalc'].rolling(20).mean()
     g['VOL50'] = g['Volume'].rolling(50).mean()
+
+    g['SMA20'] = g['Close'].rolling(20).mean()
+    g['SMA50'] = g['Close'].rolling(50).mean()
+    g['SMA200'] = g['Close'].rolling(200).mean()
+
     g['DEMA20'] = dema(g['Close'], 20)
     g['DEMA50'] = dema(g['Close'], 50)
 
     last = g.iloc[-1]
+
     if pd.isna(last['ADV20']) or last['ADV20'] < MIN_TURNOVER_RS:
+        return None
+
+    if pd.isna(last['SMA20']) or pd.isna(last['SMA50']) or pd.isna(last['SMA200']):
+        return None
+
+    # New strict trend filters
+    if not (last['Close'] > last['SMA50'] and last['Close'] > last['SMA200']):
+        return None
+
+    if not (last['SMA50'] > last['SMA200']):
+        return None
+
+    if not (last['SMA20'] > last['SMA50']):
         return None
 
     start_date = latest_date - pd.DateOffset(months=LOOKBACK_MONTHS)
@@ -55,18 +75,23 @@ def process_symbol(g, latest_date):
 
     best = None
     n = len(r)
+
     for i in range(0, n - 10):
         low_price = low_vals[i]
         if not np.isfinite(low_price) or low_price <= 0:
             continue
+
         future_high = np.nanmax(high_vals[i + 1:])
         if not np.isfinite(future_high):
             continue
+
         thrust_pct = (future_high / low_price - 1) * 100
         if thrust_pct < MIN_THRUST_PCT:
             continue
+
         j_rel = int(np.nanargmax(high_vals[i + 1:]))
         j = i + 1 + j_rel
+
         candidate = {
             'i': i,
             'j': j,
@@ -76,6 +101,7 @@ def process_symbol(g, latest_date):
             'high_date': r.iloc[j]['Date'],
             'thrust_pct': thrust_pct,
         }
+
         if best is None or candidate['thrust_pct'] > best['thrust_pct']:
             best = candidate
 
@@ -101,6 +127,7 @@ def process_symbol(g, latest_date):
 
     touch20 = bool(((last10['Low'] <= last10['DEMA20']) & (last10['High'] >= last10['DEMA20'])).any())
     touch50 = bool(((last10['Low'] <= last10['DEMA50']) & (last10['High'] >= last10['DEMA50'])).any())
+
     if not (touch20 or touch50):
         return None
 
@@ -109,6 +136,7 @@ def process_symbol(g, latest_date):
     post_high = post['High'].max()
     post_low = post['Low'].min()
     pullback_pct = ((post_high - post_low) / post_high) * 100 if pd.notna(post_high) and post_high > 0 else np.nan
+
     dist20 = abs((last['Close'] / last['DEMA20'] - 1) * 100) if pd.notna(last['DEMA20']) and last['DEMA20'] > 0 else np.nan
     dist50 = abs((last['Close'] / last['DEMA50'] - 1) * 100) if pd.notna(last['DEMA50']) and last['DEMA50'] > 0 else np.nan
     nearest_dema = np.nanmin([dist20, dist50]) if not (pd.isna(dist20) and pd.isna(dist50)) else np.nan
@@ -117,10 +145,16 @@ def process_symbol(g, latest_date):
     tightness_score = max(0, (12.0 - last10_range_pct)) * 1.5 if pd.notna(last10_range_pct) else 0
     thrust_score = best['thrust_pct'] * 0.5
     volume_score = min(float(thrust_df['VolRatio'].max()), 10.0) * 3 + days_2x * 2
-    ma_score = max(0, 4 - nearest_dema) * 3 if pd.notna(nearest_dema) else 0
+    ma_score = max(0, (4 - nearest_dema)) * 3 if pd.notna(nearest_dema) else 0
+
     score = thrust_score + volume_score + dryup_score + tightness_score + ma_score
 
-    bucket = 'Ready' if pd.notna(recent_vol_ratio) and pd.notna(last10_range_pct) and recent_vol_ratio <= READY_VOL_RATIO_MAX and last10_range_pct <= READY_RANGE_MAX else 'Watchlist'
+    bucket = 'Ready' if (
+        pd.notna(recent_vol_ratio)
+        and pd.notna(last10_range_pct)
+        and recent_vol_ratio <= READY_VOL_RATIO_MAX
+        and last10_range_pct <= READY_RANGE_MAX
+    ) else 'Watchlist'
 
     return {
         'Symbol': str(g['Symbol'].iloc[0]),
@@ -142,6 +176,10 @@ def process_symbol(g, latest_date):
         'Dist20DEMA_Pct': pct(dist20),
         'Dist50DEMA_Pct': pct(dist50),
         'NearestDEMA_Pct': pct(nearest_dema),
+        'CloseAbove50SMA': bool(last['Close'] > last['SMA50']),
+        'CloseAbove200SMA': bool(last['Close'] > last['SMA200']),
+        'SMA50Above200': bool(last['SMA50'] > last['SMA200']),
+        'SMA20Above50': bool(last['SMA20'] > last['SMA50']),
         'Bucket': bucket,
         'Score': pct(score),
     }
@@ -164,6 +202,7 @@ def main():
 
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.sort_values(['Symbol', 'Date']).reset_index(drop=True)
+
     latest_date = df['Date'].max()
 
     rows = []
@@ -173,13 +212,16 @@ def main():
             rows.append(row)
 
     out = pd.DataFrame(rows)
+
     if out.empty:
         out = pd.DataFrame(columns=[
-            'Symbol','LatestDate','ADV20_RsCr','PivotDate','PivotLow','HighDate',
-            'ThrustHigh','ThrustPct','Days2xVol','MaxVolRatio','AvgVolRatio_Thrust',
-            'Recent5VolVs50','Last10RangePct','PullbackPct','Touched20DEMA_10D',
-            'Touched50DEMA_10D','Dist20DEMA_Pct','Dist50DEMA_Pct','NearestDEMA_Pct',
-            'Bucket','Score'
+            'Symbol', 'LatestDate', 'ADV20_RsCr', 'PivotDate', 'PivotLow',
+            'HighDate', 'ThrustHigh', 'ThrustPct', 'Days2xVol', 'MaxVolRatio',
+            'AvgVolRatio_Thrust', 'Recent5VolVs50', 'Last10RangePct',
+            'PullbackPct', 'Touched20DEMA_10D', 'Touched50DEMA_10D',
+            'Dist20DEMA_Pct', 'Dist50DEMA_Pct', 'NearestDEMA_Pct',
+            'CloseAbove50SMA', 'CloseAbove200SMA', 'SMA50Above200',
+            'SMA20Above50', 'Bucket', 'Score'
         ])
     else:
         out = out.sort_values(
@@ -198,10 +240,12 @@ def main():
     print('Total candidates:', len(out))
     print('Ready:', len(ready))
     print('Watchlist:', len(watch))
+
     if len(ready):
         print('\
 Top Ready:')
         print(ready.head(20).to_string(index=False))
+
     if len(watch):
         print('\
 Top Watchlist:')
