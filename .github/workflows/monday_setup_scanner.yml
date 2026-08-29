@@ -1,0 +1,39 @@
+name: Monday Setup Scanner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pyarrow
+
+      - name: Verify input file
+        run: |
+          ls -lh
+          test -f nse_6yr_historical.parquet
+
+      - name: Run scanner
+        run: python monday_setup_scanner.py
+
+      - name: Upload outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: monday-setup-output
+          path: |
+            monday_setup_candidates.csv
+            monday_ready.csv
+            monday_watchlist.csv
