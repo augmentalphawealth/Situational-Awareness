@@ -1,0 +1,16 @@
+{"Symbol": "KDGREEN", "Date": "2026-09-03 00:00:00", "Reason": "current_nse_eq_without_historical_data"}
+{"Symbol": "LUMINO", "Date": "2026-09-03 00:00:00", "Reason": "current_nse_eq_without_historical_data"}
+{"Symbol": "APOORVA", "Date": "2026-09-03 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "GKB", "Date": "2026-09-03 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "PANCHMAHQ", "Date": "2026-09-03 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "SAB", "Date": "2026-09-03 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "SAYAJIHOTL", "Date": "2026-09-03 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "SIMPLXREA", "Date": "2026-09-03 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "SONAL", "Date": "2026-09-03 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Date": "2026-09-03 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "APOORVA"}
+{"Date": "2026-09-03 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "GKB"}
+{"Date": "2026-09-03 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "PANCHMAHQ"}
+{"Date": "2026-09-03 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "SAB"}
+{"Date": "2026-09-03 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "SAYAJIHOTL"}
+{"Date": "2026-09-03 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "SIMPLXREA"}
+{"Date": "2026-09-03 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "SONAL"}
