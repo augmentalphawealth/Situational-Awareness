@@ -1,0 +1,9 @@
+{"Symbol": "ESDS", "Date": "2026-09-04 00:00:00", "Reason": "current_nse_eq_without_historical_data"}
+{"Symbol": "APOORVA", "Date": "2026-09-04 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "PANCHMAHQ", "Date": "2026-09-04 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "UPHOT", "Date": "2026-09-04 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "ZENITHEXPO", "Date": "2026-09-04 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Date": "2026-09-04 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "APOORVA"}
+{"Date": "2026-09-04 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "PANCHMAHQ"}
+{"Date": "2026-09-04 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "UPHOT"}
+{"Date": "2026-09-04 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "ZENITHEXPO"}
