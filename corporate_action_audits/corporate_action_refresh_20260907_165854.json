@@ -1,0 +1,22 @@
+{
+  "run_time_ist": "2026-09-07T16:58:54.093686+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-08-31",
+    "2026-09-01",
+    "2026-09-02",
+    "2026-09-03",
+    "2026-09-04"
+  ],
+  "refreshed_symbols": [
+    "FMGOETZE",
+    "GICRE",
+    "GPPL",
+    "GULFOILLUB"
+  ],
+  "refreshed_symbol_count": 4,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20260907_165854.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 2,
+  "max_kite_history_days": 1800
+}
