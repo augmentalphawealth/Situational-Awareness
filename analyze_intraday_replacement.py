@@ -33,7 +33,7 @@ NOW_IST = datetime.datetime.now(IST)
 TODAY = pd.Timestamp(NOW_IST.date()).normalize()
 
 MARKET_OPEN = datetime.time(9, 15)
-MARKET_CLOSE_BUFFER = datetime.time(23, 59)
+MARKET_CLOSE_BUFFER = datetime.time(15, 35)
 CALENDAR_LOOKBACK_DAYS = 15
 
 QUOTE_CHUNK_SIZE = 200
