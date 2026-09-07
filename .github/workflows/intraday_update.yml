@@ -90,6 +90,7 @@ jobs:
           for f in \
             live_intraday_aggregate.csv \
             live_intraday_breadth.csv \
+            dashboard_data.parquet \
             last_sync.txt \
             intraday_audits; do
             if [ -e "$f" ]; then
