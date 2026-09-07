@@ -373,7 +373,7 @@ def main():
         missing_dates = sorted(set(required_dates) - db_dates)
         historical_missing_dates = [
             date for date in missing_dates
-            if not (fetch_today and date == latest_market_date)
+            if date < today
         ]
         current_eod_date = (
             latest_market_date
