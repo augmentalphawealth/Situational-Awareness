@@ -915,7 +915,11 @@ def main() -> None:
         fail("No current-day live aggregate row was generated.")
 
     atomic_write(live, LIVE_FILE)
-    atomic_write(stock_data, DASHBOARD_FILE)
+    
+    # Restrict Dashboard parquets file bloat by only saving today's data
+    today_stock_data = stock_data[stock_data["Date"] == TODAY].copy()
+    atomic_write(today_stock_data, DASHBOARD_FILE)
+    
     atomic_write(live_aggregate, LIVE_AGGREGATE_FILE, csv=True)
     atomic_write(
         today_row[
