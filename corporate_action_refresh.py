@@ -441,13 +441,20 @@ def main():
             )
 
         candidate_symbols = set(candidates)
-        if candidate_symbols - set(refreshed_histories):
-            die(
-                "At least one detected candidate could not be fully refreshed. "
-                "Database unchanged; inspect corporate_action_audits/."
+        failed_candidates = candidate_symbols - set(refreshed_histories)
+        if failed_candidates:
+            print(
+                f"⚠️ Warning: At least one detected candidate could not be fully refreshed: "
+                f"{sorted(failed_candidates)}. Proceeding with successful symbols. "
+                "Inspect corporate_action_audits/.",
+                flush=True
             )
 
         replacement_symbols = set(refreshed_histories)
+        if not replacement_symbols:
+            print("No candidates were successfully refreshed. Database unchanged.", flush=True)
+            return
+            
         unchanged = stored[~stored["Symbol"].isin(replacement_symbols)].copy()
         replacement = pd.concat(list(refreshed_histories.values()), ignore_index=True)
         combined = pd.concat([unchanged, replacement], ignore_index=True)
