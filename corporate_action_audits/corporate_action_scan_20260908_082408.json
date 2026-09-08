@@ -1,0 +1,19 @@
+{
+  "run_time_ist": "2026-09-08T08:24:08.769720+05:30",
+  "verify_dates": [
+    "2026-09-01",
+    "2026-09-02",
+    "2026-09-03",
+    "2026-09-04",
+    "2026-09-07"
+  ],
+  "threshold_pct": 2.0,
+  "symbols_scanned": 2347,
+  "candidate_symbols": [
+    "NIRLON",
+    "TCC"
+  ],
+  "candidate_count": 2,
+  "scan_failure_count": 0,
+  "scan_failures": []
+}
