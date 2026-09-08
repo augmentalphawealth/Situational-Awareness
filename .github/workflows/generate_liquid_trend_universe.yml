@@ -1,13 +1,12 @@
 name: Generate Liquid Trend Universe (EMA)
 
 on:
-  # Option 1: run manually from the Actions tab
+  # Allow manual trigger from the Actions tab
   workflow_dispatch:
 
-  # Option 2: scheduled run (adjust time as needed; this is ~10 min after typical EOD)
+  # Optional: scheduled run on weekdays
+  # Runs at 15:45 IST (Mon–Fri) => 10:15 UTC
   schedule:
-    # Runs at 15:45 IST on every trading day (Mon–Fri)
-    # GitHub uses UTC; IST = UTC+5:30, so 15:45 IST = 10:15 UTC
     - cron: "15 10 * * 1-5"
 
 jobs:
