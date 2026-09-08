@@ -20,14 +20,13 @@ EMA_MID = 50
 EMA_LONG = 200
 
 # Exclude patterns to approximate "NSE mainboard equity only"
-# Adjust if you see unwanted symbols getting included/excluded.
 EXCLUDE_SYMBOL_PATTERNS = [
     "NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
     "ETF", "ETN", "INDEX", "ICE", "BSE", "NSE",
 ]
 
 EXCLUDE_ISIN_PREFIX = [
-    "INE999",  # example placeholder; extend if you know specific non-equity prefixes
+    # Add prefixes here if you know specific non-equity ISIN patterns
 ]
 
 # ---------------------------------------------------------------------------
@@ -39,31 +38,27 @@ def is_mainboard_equity(row: pd.Series) -> bool:
     company_name = str(row.get("Company_Name", "")).upper()
     isin = str(row.get("ISIN", "")).upper()
 
-    # Exclude obvious non-equities / indices / ETFs by symbol
     if any(p in symbol for p in EXCLUDE_SYMBOL_PATTERNS):
         return False
     if any(p in company_name for p in EXCLUDE_SYMBOL_PATTERNS):
         return False
 
-    # Exclude by ISIN prefix if configured
     if any(isin.startswith(p) for p in EXCLUDE_ISIN_PREFIX):
         return False
 
-    # Basic sanity: symbol should be alphanumeric, no dashes
     if "-" in symbol or "_" in symbol:
         return False
 
     return True
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    # Expected columns (based on your diagnostic):
+    # Columns expected:
     # ['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Symbol',
     #  'Instrument_Token', 'ISIN', 'Company_ID', 'Company_Name',
     #  'Adjustment_Source', 'Turnover']
 
     df = df.sort_values(["Symbol", "Date"]).copy()
 
-    # Use existing Turnover column if available, else compute
     if "Turnover" not in df.columns:
         df["Turnover"] = df["Close"] * df["Volume"]
 
@@ -73,16 +68,13 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         if len(g) < MIN_HISTORY_DAYS:
             continue
 
-        # Use first row to decide if this is a mainboard equity
         if not is_mainboard_equity(g.iloc[0]):
             continue
 
-        # EMAs on Close
         g["ema20"] = g["Close"].ewm(span=EMA_SHORT, adjust=False).mean()
         g["ema50"] = g["Close"].ewm(span=EMA_MID, adjust=False).mean()
         g["ema200"] = g["Close"].ewm(span=EMA_LONG, adjust=False).mean()
 
-        # Median turnover over last 50 days (rolling median)
         g["median_turnover_50d"] = (
             g["Turnover"]
             .rolling(window=MEDIAN_TURNOVER_WINDOW, min_periods=MEDIAN_TURNOVER_WINDOW)
@@ -101,10 +93,14 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
+    # Ensure 'Symbol' column exists; if groupby renamed it, fix it
+    if "Symbol" not in df.columns and "symbol" in df.columns:
+        df = df.rename(columns={"symbol": "Symbol"})
+
     # Latest date per symbol
-    last = df.groupby("Symbol", sort=False).apply(
-        lambda x: x.loc[x["Date"].idxmax()]
-    ).reset_index(drop=True)
+    # Use sort + drop_duplicates instead of groupby().apply() to avoid index issues
+    df_sorted = df.sort_values("Date", ascending=False)
+    last = df_sorted.drop_duplicates(subset=["Symbol"], keep="first").copy()
 
     f = last.copy()
 
@@ -121,7 +117,13 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     f["median_turnover_50d_cr"] = f["median_turnover_50d"] / 1_00_00_000
     f["trend_stack"] = "Close > EMA20 > EMA50 > EMA200"
 
-    # Select final columns
+    # Ensure Symbol column name is correct before selecting out_cols
+    if "Symbol" not in f.columns:
+        # Fallback: use the first column as symbol if only one left
+        possible_sym_cols = [c for c in f.columns if "symbol" in c.lower() or c.lower() == "symbol"]
+        if possible_sym_cols:
+            f = f.rename(columns={possible_sym_cols[0]: "Symbol"})
+
     out_cols = [
         "Symbol",
         "Date",
@@ -136,6 +138,9 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         "Company_Name",
         "ISIN",
     ]
+    # Only keep columns that exist
+    out_cols = [c for c in out_cols if c in f.columns]
+
     f = f[out_cols].rename(
         columns={
             "Symbol": "symbol",
@@ -156,7 +161,6 @@ def main():
     print("Loading parquet...")
     df = pd.read_parquet(PARQUET_PATH)
 
-    # Ensure expected columns exist (based on your diagnostic output)
     required_cols = {
         "Date", "Open", "High", "Low", "Close", "Volume", "Symbol", "Turnover"
     }
@@ -164,7 +168,6 @@ def main():
         missing = required_cols - set(df.columns)
         raise ValueError(f"Missing required columns in parquet: {missing}")
 
-    # Convert Date to datetime if needed
     if not pd.api.types.is_datetime64_any_dtype(df["Date"]):
         df["Date"] = pd.to_datetime(df["Date"])
 
@@ -172,7 +175,6 @@ def main():
     ind = compute_indicators(df)
     if ind.empty:
         print("No symbols passed basic history / equity filter.")
-        # Still write empty outputs
         pd.DataFrame().to_csv(OUTPUT_CSV, index=False)
         with open(OUTPUT_TV_TXT, "w") as f:
             pass
@@ -188,11 +190,9 @@ def main():
             pass
         return
 
-    # Write full CSV
     filtered.to_csv(OUTPUT_CSV, index=False)
     print(f"Wrote {len(filtered)} symbols to {OUTPUT_CSV}")
 
-    # Write TradingView symbol list (one symbol per line)
     symbols = filtered["symbol"].dropna().unique().tolist()
     with open(OUTPUT_TV_TXT, "w") as f:
         for s in symbols:
