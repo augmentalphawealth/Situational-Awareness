@@ -1,21 +1,25 @@
 name: Generate Liquid Trend Universe (EMA)
 
 on:
-  # Allow manual trigger from the Actions tab
   workflow_dispatch:
 
-  # Optional: scheduled run on weekdays
-  # Runs at 15:45 IST (Mon–Fri) => 10:15 UTC
+  # 15:45 IST, Monday to Friday.
+  # GitHub Actions cron uses UTC; IST is UTC+5:30.
   schedule:
     - cron: "15 10 * * 1-5"
+
+permissions:
+  contents: write
 
 jobs:
   generate-universe:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,15 +35,17 @@ jobs:
         run: |
           python generate_liquid_trend_universe.py
 
-      - name: Commit and push results
+      - name: Commit refreshed universe files
         run: |
-          git config --local user.email "github-actions[bot]@github.com"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          if ! git diff --quiet liquid_trend_universe.csv tradingview_liquid_trend_universe.txt; then
-            git add liquid_trend_universe.csv tradingview_liquid_trend_universe.txt
-            git commit -m "Update liquid trend universe (EMA-based) [auto]"
-            git push
+          git add liquid_trend_universe.csv
+          git add tradingview_liquid_trend_universe.txt
+
+          if git diff --cached --quiet; then
+            echo "No output changes to commit."
           else
-            echo "No changes to commit"
+            git commit -m "Update EMA liquid trend universe [auto]"
+            git push origin main
           fi
