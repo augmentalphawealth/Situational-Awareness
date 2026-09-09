@@ -13,3 +13,4 @@ pycryptodome
 streamlit-autorefresh
 pynacl
 playwright
+kiteconnect
