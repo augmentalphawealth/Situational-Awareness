@@ -11,3 +11,5 @@ logzero
 websocket-client
 pycryptodome
 streamlit-autorefresh
+pynacl
+playwright
