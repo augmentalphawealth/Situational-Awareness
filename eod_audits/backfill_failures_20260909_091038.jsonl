@@ -1,0 +1,110 @@
+{"Symbol": "AARNAV", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "ABINFRA", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "ACSTECH", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "AKI", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "ALFREDHE", "Reason": "empty_backfill_response"}
+{"Symbol": "AMBALALSA", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "ARIES", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "ASSAMENT", "Reason": "empty_backfill_response"}
+{"Symbol": "BIRLAPREC", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "BLUECHIP", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "BURNPUR", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "CALSOFT", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "CRSL", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "CTE", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "CYBERMEDIA", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "DAICHI", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "DHABRIYA", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "DTIL", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "EBIX", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "GVPTECH", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "HEG", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "HFCL", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "ICDSLTD", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "INDIAGLYCO", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "KALYANIFRG", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "KAYA", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "KOTARISUG", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "KRONOX", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "LANCORHOL", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "LEENEE", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "MANAKSTEEL", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "MANBRO", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "MASKINVEST", "Reason": "empty_backfill_response"}
+{"Symbol": "MINALIND", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "MPDL", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "MYSORPETRO", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "NATCAPSUQ", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "NIRAJISPAT", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "PAR", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "PBMPOLY", "Reason": "empty_backfill_response"}
+{"Symbol": "RBZJEWEL", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "RNBDENIMS", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SCPL", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SHAHALLOYS", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SIGIND", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SIGMAADV", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SONAMLTD", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SRIKPRIND", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SUPTANERY", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SWARAJ", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "SWISSMLTRY", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "TIJARIA", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "TPHQ", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "VALIANTLAB", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "VIRTUALG", "Reason": "instrument_token_failure", "Failures": []}
+{"Symbol": "AARNAV", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "ABINFRA", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "ACSTECH", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "AKI", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "ALFREDHE", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "AMBALALSA", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "ARIES", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "ASSAMENT", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "BIRLAPREC", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "BLUECHIP", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "BURNPUR", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "CALSOFT", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "CRSL", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "CTE", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "CYBERMEDIA", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "DAICHI", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "DHABRIYA", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "DTIL", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "EBIX", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "GVPTECH", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "HEG", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "HFCL", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "ICDSLTD", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "INDIAGLYCO", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "KALYANIFRG", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "KAYA", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "KOTARISUG", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "KRONOX", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "LANCORHOL", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "LEENEE", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "MANAKSTEEL", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "MANBRO", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "MASKINVEST", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "MINALIND", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "MPDL", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "MYSORPETRO", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "NATCAPSUQ", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "NIRAJISPAT", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "PAR", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "PBMPOLY", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "RBZJEWEL", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "RNBDENIMS", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SCPL", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SHAHALLOYS", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SIGIND", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SIGMAADV", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SONAMLTD", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SRIKPRIND", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SUPTANERY", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SWARAJ", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "SWISSMLTRY", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "TIJARIA", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "TPHQ", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "VALIANTLAB", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
+{"Symbol": "VIRTUALG", "Date": "2026-09-08 00:00:00", "Reason": "required_pair_missing"}
