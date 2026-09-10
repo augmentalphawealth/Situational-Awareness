@@ -1,0 +1,21 @@
+{
+  "run_time_ist": "2026-09-10T08:23:57.594309+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-09-03",
+    "2026-09-04",
+    "2026-09-07",
+    "2026-09-08",
+    "2026-09-09"
+  ],
+  "refreshed_symbols": [
+    "GNFC",
+    "RADIANTCMS",
+    "ZEEL"
+  ],
+  "refreshed_symbol_count": 3,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20260910_082357.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 2,
+  "max_kite_history_days": 1800
+}
