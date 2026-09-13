@@ -1,0 +1,19 @@
+{
+  "run_time_ist": "2026-09-13T08:22:33.908727+05:30",
+  "verify_dates": [
+    "2026-09-07",
+    "2026-09-08",
+    "2026-09-09",
+    "2026-09-10",
+    "2026-09-11"
+  ],
+  "threshold_pct": 2.0,
+  "symbols_scanned": 2351,
+  "candidate_symbols": [
+    "BLIL",
+    "EMPIND"
+  ],
+  "candidate_count": 2,
+  "scan_failure_count": 0,
+  "scan_failures": []
+}
