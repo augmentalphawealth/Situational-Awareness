@@ -1,0 +1,13 @@
+{
+  "run_time_ist": "2026-09-15T08:25:29.179516+05:30",
+  "failures": [
+    {
+      "Symbol": "BLIL",
+      "reason": "empty_full_history"
+    },
+    {
+      "Symbol": "EMPIND",
+      "reason": "empty_full_history"
+    }
+  ]
+}
