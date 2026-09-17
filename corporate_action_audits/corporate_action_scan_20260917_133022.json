@@ -1,0 +1,19 @@
+{
+  "run_time_ist": "2026-09-17T13:30:22.068728+05:30",
+  "verify_dates": [
+    "2026-09-09",
+    "2026-09-10",
+    "2026-09-11",
+    "2026-09-15",
+    "2026-09-16"
+  ],
+  "threshold_pct": 2.0,
+  "symbols_scanned": 2370,
+  "candidate_symbols": [
+    "BLIL",
+    "TNPL"
+  ],
+  "candidate_count": 2,
+  "scan_failure_count": 0,
+  "scan_failures": []
+}
