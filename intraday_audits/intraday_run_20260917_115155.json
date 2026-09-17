@@ -1,0 +1,23 @@
+{
+  "date": "2026-09-17",
+  "time_ist": "11:51 AM IST",
+  "status": "LIVE_INTRADAY",
+  "nse_current_eq_symbols": 2309,
+  "eligible_symbols_with_history": 2302,
+  "current_eq_without_history": 7,
+  "historical_not_current_eq": 68,
+  "valid_live_quotes": 2274,
+  "missing_or_invalid_live_quotes": 28,
+  "coverage": 0.987837,
+  "minimum_coverage": 0.8,
+  "critical_missing": [],
+  "quote_failure_records": 28,
+  "live_aggregate_file": "live_intraday_aggregate.csv",
+  "composite_score": 29,
+  "volume_ratio": 3.2646924624536293,
+  "intraday_volume_points": 10,
+  "daily_t3_breakouts": 20,
+  "daily_t3_wins": 2,
+  "t3_breakouts_5d_for_score": 120,
+  "t3_wins_5d_for_score": 36
+}
