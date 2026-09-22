@@ -1,0 +1,25 @@
+{
+  "run_time_ist": "2026-09-22T13:28:43.669199+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-09-15",
+    "2026-09-16",
+    "2026-09-17",
+    "2026-09-18",
+    "2026-09-21"
+  ],
+  "refreshed_symbols": [
+    "AMBIKCO",
+    "GOCLCORP",
+    "GTPL",
+    "MONTECARLO",
+    "PNBGILTS",
+    "RUCHIRA",
+    "SPIC"
+  ],
+  "refreshed_symbol_count": 7,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20260922_132843.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 2,
+  "max_kite_history_days": 1800
+}
