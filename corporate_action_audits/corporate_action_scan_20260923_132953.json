@@ -1,0 +1,19 @@
+{
+  "run_time_ist": "2026-09-23T13:29:53.983447+05:30",
+  "verify_dates": [
+    "2026-09-16",
+    "2026-09-17",
+    "2026-09-18",
+    "2026-09-21",
+    "2026-09-22"
+  ],
+  "threshold_pct": 2.0,
+  "symbols_scanned": 2394,
+  "candidate_symbols": [
+    "RUBFILA",
+    "TAALTECH"
+  ],
+  "candidate_count": 2,
+  "scan_failure_count": 0,
+  "scan_failures": []
+}
