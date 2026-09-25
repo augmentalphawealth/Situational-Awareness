@@ -1,0 +1,13 @@
+{
+  "run_time_ist": "2026-09-25T13:43:08.258635+05:30",
+  "failures": [
+    {
+      "Symbol": "RUBFILA",
+      "reason": "empty_full_history"
+    },
+    {
+      "Symbol": "TAALTECH",
+      "reason": "empty_full_history"
+    }
+  ]
+}
