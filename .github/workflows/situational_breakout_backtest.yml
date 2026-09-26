@@ -43,8 +43,12 @@ jobs:
           ls -lh nse_6yr_historical.parquet
           test -f nse_6yr_historical.parquet
 
+      - name: Validate backtest scripts
+        run: |
+          python -m py_compile swing_trend_backtest_v2.py run_swing_trend_backtest_v2.py
+
       - name: Run Active Leader swing backtest v2
-        run: python swing_trend_backtest_v2.py
+        run: python run_swing_trend_backtest_v2.py
 
       - name: Upload backtest outputs
         uses: actions/upload-artifact@v4
