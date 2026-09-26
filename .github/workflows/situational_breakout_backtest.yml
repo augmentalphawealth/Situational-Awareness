@@ -1,7 +1,16 @@
-name: Situational Breakout Backtest
+name: EMA Swing Trend Backtest
 
 on:
   workflow_dispatch:
+    inputs:
+      round_trip_cost_bps:
+        description: "Round-trip trading cost assumption (basis points)"
+        required: false
+        default: "20"
+      oos_years:
+        description: "Years reserved for out-of-sample validation"
+        required: false
+        default: "2"
 
 permissions:
   contents: read
@@ -10,6 +19,9 @@ jobs:
   backtest:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      ROUND_TRIP_COST_BPS: ${{ github.event.inputs.round_trip_cost_bps || '20' }}
+      OOS_YEARS: ${{ github.event.inputs.oos_years || '2' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,15 +43,21 @@ jobs:
           ls -lh nse_6yr_historical.parquet
           test -f nse_6yr_historical.parquet
 
-      - name: Run scanner and two-year event study
-        run: python situational_breakout_scanner.py
+      - name: Run EMA swing trend backtest
+        run: python swing_trend_backtest.py
 
-      - name: Upload scanner outputs
+      - name: Upload backtest outputs
         uses: actions/upload-artifact@v4
         with:
-          name: situational-breakout-backtest
+          name: ema-swing-trend-backtest
+          if-no-files-found: error
+          retention-days: 14
           path: |
-            situational_breakout_daily.csv
-            situational_breakout_trades.csv
-            situational_breakout_summary.csv
-            situational_breakout_symbol_stats.csv
+            swing_backtest_setups.csv
+            swing_backtest_trades.csv
+            swing_backtest_strategy_comparison.csv
+            swing_backtest_yearly.csv
+            swing_backtest_symbol_results.csv
+            swing_backtest_parameter_stability.csv
+            swing_backtest_recommended_candidates.csv
+            swing_backtest_notes.txt
