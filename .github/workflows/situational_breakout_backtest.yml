@@ -1,4 +1,4 @@
-name: EMA Swing Trend Backtest
+name: EMA Active Leader Swing Backtest v2
 
 on:
   workflow_dispatch:
@@ -43,21 +43,22 @@ jobs:
           ls -lh nse_6yr_historical.parquet
           test -f nse_6yr_historical.parquet
 
-      - name: Run EMA swing trend backtest
-        run: python swing_trend_backtest.py
+      - name: Run Active Leader swing backtest v2
+        run: python swing_trend_backtest_v2.py
 
       - name: Upload backtest outputs
         uses: actions/upload-artifact@v4
         with:
-          name: ema-swing-trend-backtest
+          name: ema-active-leader-backtest-v2
           if-no-files-found: error
           retention-days: 14
           path: |
-            swing_backtest_setups.csv
-            swing_backtest_trades.csv
-            swing_backtest_strategy_comparison.csv
-            swing_backtest_yearly.csv
-            swing_backtest_symbol_results.csv
-            swing_backtest_parameter_stability.csv
-            swing_backtest_recommended_candidates.csv
-            swing_backtest_notes.txt
+            active_leader_days.csv
+            active_leader_setups.csv
+            active_leader_trades.csv
+            active_leader_strategy_comparison.csv
+            active_leader_yearly.csv
+            active_leader_symbol_results.csv
+            active_leader_parameter_stability.csv
+            active_leader_recommended_candidates.csv
+            active_leader_notes.txt
