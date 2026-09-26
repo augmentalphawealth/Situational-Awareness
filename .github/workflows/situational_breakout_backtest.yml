@@ -1,4 +1,4 @@
-name: EMA Active Leader Swing Backtest v2
+name: Strict Dry-Up Active Leader Backtest v3
 
 on:
   workflow_dispatch:
@@ -38,31 +38,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy pyarrow
 
-      - name: Verify historical database
+      - name: Verify data files
         run: |
-          ls -lh nse_6yr_historical.parquet
+          ls -lh nse_6yr_historical.parquet historical_breadth_regime_6yr.csv
           test -f nse_6yr_historical.parquet
+          test -f historical_breadth_regime_6yr.csv
 
       - name: Validate backtest scripts
         run: |
-          python -m py_compile swing_trend_backtest_v2.py run_swing_trend_backtest_v2.py
+          python -m py_compile swing_trend_backtest_v2.py swing_trend_backtest_v3.py
 
-      - name: Run Active Leader swing backtest v2
-        run: python run_swing_trend_backtest_v2.py
+      - name: Run strict dry-up backtest v3
+        run: python swing_trend_backtest_v3.py
 
       - name: Upload backtest outputs
         uses: actions/upload-artifact@v4
         with:
-          name: ema-active-leader-backtest-v2
+          name: strict-dryup-active-leader-backtest-v3
           if-no-files-found: error
           retention-days: 14
           path: |
-            active_leader_days.csv
-            active_leader_setups.csv
-            active_leader_trades.csv
-            active_leader_strategy_comparison.csv
-            active_leader_yearly.csv
-            active_leader_symbol_results.csv
-            active_leader_parameter_stability.csv
-            active_leader_recommended_candidates.csv
-            active_leader_notes.txt
+            strict_dryup_v3_setups.csv
+            strict_dryup_v3_trades.csv
+            strict_dryup_v3_strategy_comparison.csv
+            strict_dryup_v3_yearly.csv
+            strict_dryup_v3_symbol_results.csv
+            strict_dryup_v3_parameter_stability.csv
+            strict_dryup_v3_recommended_candidates.csv
+            strict_dryup_v3_concentration.csv
+            strict_dryup_v3_notes.txt
