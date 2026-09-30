@@ -20,7 +20,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,14 +40,16 @@ jobs:
           set -euo pipefail
           python -u daily_actionable_setup_scanner.py
 
-      - name: Commit actionable setup list
+      - name: Commit actionable setup outputs
         run: |
           set -euo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add daily_actionable_setups.csv
+          git add \
+            daily_actionable_setups.csv \
+            daily_actionable_tradingview_watchlist.txt
 
           if git diff --cached --quiet; then
             echo "No actionable setup changes to commit."
@@ -55,4 +57,5 @@ jobs:
           fi
 
           git commit -m "Update daily actionable setup list"
+          git pull --rebase origin main
           git push origin HEAD:main
