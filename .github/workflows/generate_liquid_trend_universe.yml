@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: market-data-write
+  cancel-in-progress: false
+
 jobs:
   generate-universe:
     runs-on: ubuntu-latest
@@ -28,16 +32,20 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Generate liquid trend universe
         run: |
+          set -euo pipefail
           python generate_liquid_trend_universe.py
 
       - name: Commit refreshed universe files
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
+
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
           git add liquid_trend_universe.csv
@@ -45,7 +53,9 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "No output changes to commit."
-          else
-            git commit -m "Update EMA liquid trend universe [auto]"
-            git push origin main
+            exit 0
           fi
+
+          git commit -m "Update EMA liquid trend universe [auto]"
+          git pull --rebase origin main
+          git push origin HEAD:main
