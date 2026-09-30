@@ -71,6 +71,11 @@ jobs:
           set -euo pipefail
           python -u fetch_eod_6yr.py
 
+      - name: Generate daily actionable setup list
+        run: |
+          set -euo pipefail
+          python -u daily_actionable_setup_scanner.py
+
       - name: Write EOD finalized timestamp
         run: |
           set -euo pipefail
@@ -90,6 +95,7 @@ jobs:
             historical_breadth_regime_6yr.csv \
             trailing_cache.parquet \
             nse_6yr_historical.parquet \
+            daily_actionable_setups.csv \
             last_sync.txt \
             eod_audits
 
@@ -98,5 +104,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Auto-update: EOD historical data"
+          git commit -m "Auto-update: EOD historical data and actionable setups"
           git push origin HEAD:main
