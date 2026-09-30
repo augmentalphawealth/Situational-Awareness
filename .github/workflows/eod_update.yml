@@ -28,7 +28,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -96,6 +96,7 @@ jobs:
             trailing_cache.parquet \
             nse_6yr_historical.parquet \
             daily_actionable_setups.csv \
+            daily_actionable_tradingview_watchlist.txt \
             last_sync.txt \
             eod_audits
 
@@ -105,4 +106,5 @@ jobs:
           fi
 
           git commit -m "Auto-update: EOD historical data and actionable setups"
+          git pull --rebase origin main
           git push origin HEAD:main
