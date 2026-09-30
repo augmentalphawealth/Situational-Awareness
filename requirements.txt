@@ -1,5 +1,6 @@
 streamlit
 pandas
+pyarrow
 plotly
 smartapi-python
 pyotp
