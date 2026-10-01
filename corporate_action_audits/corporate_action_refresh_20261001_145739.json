@@ -1,0 +1,19 @@
+{
+  "run_time_ist": "2026-10-01T14:57:39.266104+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-09-24",
+    "2026-09-25",
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30"
+  ],
+  "refreshed_symbols": [
+    "RSYSTEMS"
+  ],
+  "refreshed_symbol_count": 1,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20261001_145739.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 2,
+  "max_kite_history_days": 1800
+}

@@ -1,0 +1,20 @@
+{
+  "run_time_ist": "2026-10-01T14:57:39.266104+05:30",
+  "verify_dates": [
+    "2026-09-24",
+    "2026-09-25",
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30"
+  ],
+  "threshold_pct": 2.0,
+  "symbols_scanned": 2417,
+  "candidate_symbols": [
+    "AASTHA",
+    "RSYSTEMS",
+    "SSDL"
+  ],
+  "candidate_count": 3,
+  "scan_failure_count": 0,
+  "scan_failures": []
+}
