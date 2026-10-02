@@ -1,0 +1,13 @@
+{
+  "run_time_ist": "2026-10-02T14:32:57.590923+05:30",
+  "failures": [
+    {
+      "Symbol": "AASTHA",
+      "reason": "empty_full_history"
+    },
+    {
+      "Symbol": "SSDL",
+      "reason": "empty_full_history"
+    }
+  ]
+}
