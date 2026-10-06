@@ -1,10 +1,8 @@
 name: Daily Token Rotation
 
 on:
+  # Scheduled externally via cron-job.org; keep API and manual triggers enabled.
   workflow_dispatch:
-  schedule:
-    # 02:30 UTC = 08:00 AM IST, every day including weekends.
-    - cron: "30 2 * * *"
 
 permissions:
   contents: read

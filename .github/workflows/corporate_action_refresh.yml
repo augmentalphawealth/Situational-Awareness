@@ -1,11 +1,8 @@
 name: Corporate Action History Refresh
 
 on:
+  # Scheduled externally via cron-job.org; keep API and manual triggers enabled.
   workflow_dispatch:
-  schedule:
-    # 02:45 UTC = 08:15 AM IST, every day including weekends.
-    # This starts after the 08:00 AM IST token-rotation workflow.
-    - cron: "45 2 * * *"
 
 permissions:
   contents: write
