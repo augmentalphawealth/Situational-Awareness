@@ -277,11 +277,24 @@ def step_next_day():
 
 
 def status_for_selected_date(selected_date):
-    """Show a timestamp only when the selected view is valid live intraday data."""
+    """Describe the displayed data's source and recorded time, not the clock."""
     selected_date = pd.Timestamp(selected_date).normalize()
-    if selected_date == today_ist and is_live_active:
-        return f"Live Intraday: {today_ist.strftime('%d %B %Y')}, {live_time_label} IST"
-    return f"EOD Data: {selected_date.strftime('%d %B %Y')}"
+    available_dates = df_agg.loc[df_agg["Date"] <= selected_date, "Date"]
+    if available_dates.empty:
+        return f"No data available on or before {selected_date.strftime('%d %B %Y')}"
+
+    data_date = pd.Timestamp(available_dates.max()).normalize()
+    date_label = data_date.strftime("%d %B %Y")
+    if (df_eod["Date"] == data_date).any():
+        return f"EOD Data: {date_label}"
+
+    if data_date == today_ist and full_live_available:
+        timestamp = f"{live_time_label} IST" if live_time_label else "time unavailable"
+        if is_live_active:
+            return f"Live Intraday: {date_label}, {timestamp}"
+        return f"Intraday snapshot: {date_label}, {timestamp} — EOD pending"
+
+    return f"Data snapshot: {date_label} — EOD not confirmed"
 
 
 head_col1, head_spacer, head_col2, head_col3 = st.columns([3.0, 0.5, 2.0, 1.2])
@@ -396,7 +409,11 @@ def get_bar_color(val):
 with st.container(border=True):
     top_c1, top_c2 = st.columns([1.2, 2.8])
     with top_c1:
-        score_label = "MOMENTUM HEALTH SCORE (LIVE INTRADAY)" if is_selected_today_live else "MOMENTUM HEALTH SCORE (EOD)"
+        if is_selected_today_live:
+            score_status = "LIVE INTRADAY" if is_live_active else "INTRADAY — EOD PENDING"
+            score_label = f"MOMENTUM HEALTH SCORE ({score_status})"
+        else:
+            score_label = "MOMENTUM HEALTH SCORE (EOD)"
         st.markdown(f"""
             <div style='text-align: center; padding-top: 10px;'>
                 <div class='card-title' style='font-size: 12px;'>{score_label}</div>
@@ -417,7 +434,8 @@ with st.container(border=True):
 advances = safe_int(latest.get("Advances", 0))
 declines = safe_int(latest.get("Declines", 0))
 total_univ = safe_int(latest.get("Total_Universe", 2400))
-actual_date_str = f"{st.session_state.analysis_date.day} {st.session_state.analysis_date.strftime('%B %Y')}"
+data_date = pd.Timestamp(latest["Date"]).normalize()
+actual_date_str = f"{data_date.day} {data_date.strftime('%B %Y')}"
 
 if is_selected_today_live and live_latest is not None:
     live_adv = safe_int(live_latest.get("Advances", advances))
@@ -426,8 +444,9 @@ if is_selected_today_live and live_latest is not None:
         advances = live_adv
         declines = live_dec
         total_univ = safe_int(live_latest.get("Total_Universe", total_univ))
-        intraday_label = "⚡ LIVE INTRADAY SNAPSHOT" if is_live_active else "⏳ INTRADAY CLOSE SNAPSHOT — EOD PROCESSING PENDING"
-        actual_date_str = f"{today_ist.day} {today_ist.strftime('%B %Y')} <span style='color:#eab308; font-weight:800;'>({intraday_label})</span>"
+        intraday_label = "⚡ LIVE INTRADAY SNAPSHOT" if is_live_active else "⏳ INTRADAY SNAPSHOT — EOD PROCESSING PENDING"
+        snapshot_time = f"{live_time_label} IST" if live_time_label else "time unavailable"
+        actual_date_str = f"{data_date.day} {data_date.strftime('%B %Y')}, {snapshot_time} <span style='color:#eab308; font-weight:800;'>({intraday_label})</span>"
 
 st.markdown(f"<p style='color: #475569; font-size: 13px; font-weight: 600; margin-top: 15px;'>Market Breadth Status for: <span style='color:#0f172a;'>{actual_date_str}</span></p>", unsafe_allow_html=True)
 
