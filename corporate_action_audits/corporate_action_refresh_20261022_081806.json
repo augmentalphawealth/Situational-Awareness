@@ -1,0 +1,19 @@
+{
+  "run_time_ist": "2026-10-22T08:18:06.059858+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-10-13",
+    "2026-10-14",
+    "2026-10-15",
+    "2026-10-16",
+    "2026-10-19"
+  ],
+  "refreshed_symbols": [
+    "JSWDULUX"
+  ],
+  "refreshed_symbol_count": 1,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20261022_081806.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 1,
+  "max_kite_history_days": 1800
+}
