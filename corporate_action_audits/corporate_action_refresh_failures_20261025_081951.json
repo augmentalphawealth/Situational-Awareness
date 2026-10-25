@@ -1,0 +1,9 @@
+{
+  "run_time_ist": "2026-10-25T08:19:51.927737+05:30",
+  "failures": [
+    {
+      "Symbol": "AZADIND",
+      "reason": "empty_full_history"
+    }
+  ]
+}
