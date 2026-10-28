@@ -16,7 +16,7 @@ import requests
 from kite_helper import fetch_with_backoff, get_kite_client
 
 IST = ZoneInfo("Asia/Kolkata")
-EOD_TIME = datetime.time(17, 0)
+EOD_TIME = datetime.time(16, 0)
 
 QUOTE_CHUNK_SIZE = 200
 NSE_DOWNLOAD_MAX_RETRIES = 5
