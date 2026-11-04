@@ -1,0 +1,20 @@
+{
+  "run_time_ist": "2026-11-04T08:18:20.931770+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-10-28",
+    "2026-10-29",
+    "2026-10-30",
+    "2026-11-02",
+    "2026-11-03"
+  ],
+  "refreshed_symbols": [
+    "COALINDIA",
+    "SUVIDHAA"
+  ],
+  "refreshed_symbol_count": 2,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20261104_081820.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 1,
+  "max_kite_history_days": 1800
+}
