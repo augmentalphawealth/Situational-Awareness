@@ -1,0 +1,19 @@
+{
+  "run_time_ist": "2026-11-06T08:17:54.582924+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-10-30",
+    "2026-11-02",
+    "2026-11-03",
+    "2026-11-04",
+    "2026-11-05"
+  ],
+  "refreshed_symbols": [
+    "PETRONET"
+  ],
+  "refreshed_symbol_count": 1,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20261106_081754.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 5,
+  "max_kite_history_days": 1800
+}
