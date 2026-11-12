@@ -1,0 +1,21 @@
+{
+  "run_time_ist": "2026-11-12T08:17:55.969261+05:30",
+  "verify_dates": [
+    "2026-11-05",
+    "2026-11-06",
+    "2026-11-08",
+    "2026-11-09",
+    "2026-11-11"
+  ],
+  "threshold_pct": 2.0,
+  "symbols_scanned": 2540,
+  "candidate_symbols": [
+    "BAYERCROP",
+    "CRIZAC",
+    "KMEW",
+    "ONGC"
+  ],
+  "candidate_count": 4,
+  "scan_failure_count": 0,
+  "scan_failures": []
+}

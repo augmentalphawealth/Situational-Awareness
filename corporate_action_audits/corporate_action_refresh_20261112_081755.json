@@ -1,0 +1,20 @@
+{
+  "run_time_ist": "2026-11-12T08:17:55.969261+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-11-05",
+    "2026-11-06",
+    "2026-11-08",
+    "2026-11-09",
+    "2026-11-11"
+  ],
+  "refreshed_symbols": [
+    "BAYERCROP",
+    "ONGC"
+  ],
+  "refreshed_symbol_count": 2,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20261112_081755.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 2,
+  "max_kite_history_days": 1800
+}
