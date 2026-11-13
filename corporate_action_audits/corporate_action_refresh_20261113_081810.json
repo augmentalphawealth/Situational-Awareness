@@ -1,0 +1,20 @@
+{
+  "run_time_ist": "2026-11-13T08:18:10.155752+05:30",
+  "threshold_pct": 2.0,
+  "verify_dates": [
+    "2026-11-06",
+    "2026-11-08",
+    "2026-11-09",
+    "2026-11-11",
+    "2026-11-12"
+  ],
+  "refreshed_symbols": [
+    "PASHUPATI",
+    "TRANSWORLD"
+  ],
+  "refreshed_symbol_count": 2,
+  "backup": "corporate_action_backups/nse_6yr_historical.before_corporate_action.20261113_081810.parquet",
+  "scan_failure_count": 0,
+  "refresh_failure_count": 2,
+  "max_kite_history_days": 1800
+}
