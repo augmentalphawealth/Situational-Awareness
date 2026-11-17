@@ -1,0 +1,14 @@
+{"Symbol": "DCMFINSERV", "Date": "2026-11-17 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "KRITINUT", "Date": "2026-11-17 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "MADHAV", "Date": "2026-11-17 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "SAYAJIHOTL", "Date": "2026-11-17 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "VASUPRADA", "Date": "2026-11-17 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "WHBRADY", "Date": "2026-11-17 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "ZENITHEXPO", "Date": "2026-11-17 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Date": "2026-11-17 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "DCMFINSERV"}
+{"Date": "2026-11-17 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "KRITINUT"}
+{"Date": "2026-11-17 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "MADHAV"}
+{"Date": "2026-11-17 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "SAYAJIHOTL"}
+{"Date": "2026-11-17 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "VASUPRADA"}
+{"Date": "2026-11-17 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "WHBRADY"}
+{"Date": "2026-11-17 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "ZENITHEXPO"}
