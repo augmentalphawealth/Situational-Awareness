@@ -52,11 +52,11 @@ def safe_int(val):
         return 0
 
 
-@st.cache_data(ttl=30, show_spinner=False)
 def get_latest_commit_sha():
-    url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits/{BRANCH}"
+    url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits/{BRANCH}?t={int(time.time())}"
     headers = {
-        "Accept": "application/vnd.github+json",
+        "Accept": "application/vnd.github.v3+json",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
     }
     token = st.secrets.get("GITHUB_TOKEN", None)
     if token:
@@ -86,7 +86,6 @@ def read_remote_file(path):
     return None
 
 
-@st.cache_data(ttl=10, show_spinner=False)
 def get_last_updated_time():
     text = read_remote_file(SYNC_FILE)
     return text.strip() if text else "Unknown"
@@ -744,42 +743,41 @@ drill_col, _ = st.columns([1.5, 1])
 with drill_col:
     param_choices = st.multiselect("Select Parameters to Filter (Combines with AND):", ["Advances (Stocks in Green)", "Declines (Stocks in Red)", "Stocks > 20 EMA (Mature Only)", "Stocks > 50 EMA (Mature Only)", "Stocks > 200 EMA (Mature Only)", "Up 4% or more Today", "Down 4% or more Today", "1-Month 25% Winners", "1-Month 25% Losers", "New 52-Week Highs (Mature > 1Yr)", "New IPO/Listing Highs (< 1Yr)"])
 
-widrill_data = pd.DataFrame()
-if param_choices:
-    with st.spinner("🔍 Loading stock data..."):
-        drill_data = get_drilldown_data(st.session_state.analysis_date)
+with st.spinner("🔍 Loading stock data..."):
+    drill_data = get_drilldown_data(st.session_state.analysis_date)
 
-if not param_choices:
-    st.info("👆 Select one or more parameters above to load stock-level data. The large stock dataset will download only when you request a filter.")
-elif not drill_data.empty:
+if not drill_data.empty:
     res = drill_data.copy()
-    for param in param_choices:
-        if param == "Advances (Stocks in Green)":
-            res = res[res["Gainer"] == True]
-        elif param == "Declines (Stocks in Red)":
-            res = res[res["Loser"] == True]
-        elif param == "Stocks > 20 EMA (Mature Only)":
-            res = res[res["Above_20_EMA"] == True]
-        elif param == "Stocks > 50 EMA (Mature Only)":
-            res = res[res["Above_50_EMA"] == True]
-        elif param == "Stocks > 200 EMA (Mature Only)":
-            res = res[res["Above_200_EMA"] == True]
-        elif param == "Up 4% or more Today":
-            res = res[res["Up_4_Pct"] == True]
-        elif param == "Down 4% or more Today":
-            res = res[res["Down_4_Pct"] == True]
-        elif param == "1-Month 25% Winners":
-            res = res[res["Up_25_1M"] == True]
-        elif param == "1-Month 25% Losers":
-            res = res[res["Down_25_1M"] == True]
-        elif param == "New 52-Week Highs (Mature > 1Yr)":
-            res = res[res["New_52W_High"] == True]
-        elif param == "New IPO/Listing Highs (< 1Yr)":
-            res = res[res["IPO_New_High"] == True]
-    res = res[["Symbol", "Close", "Daily_Pct", "Pct_1M"]].sort_values("Daily_Pct", ascending=False)
-    res = res.rename(columns={"Daily_Pct": "Daily_%_Change", "Pct_1M": "1M_%_Change"})
-    st.write(f"**Found {len(res)} matching VIP active stocks** for {selected_date_display}:")
-    st.dataframe(res, use_container_width=True, height=350)
+    if param_choices:
+        for param in param_choices:
+            if param == "Advances (Stocks in Green)":
+                res = res[res["Gainer"] == True]
+            elif param == "Declines (Stocks in Red)":
+                res = res[res["Loser"] == True]
+            elif param == "Stocks > 20 EMA (Mature Only)":
+                res = res[res["Above_20_EMA"] == True]
+            elif param == "Stocks > 50 EMA (Mature Only)":
+                res = res[res["Above_50_EMA"] == True]
+            elif param == "Stocks > 200 EMA (Mature Only)":
+                res = res[res["Above_200_EMA"] == True]
+            elif param == "Up 4% or more Today":
+                res = res[res["Up_4_Pct"] == True]
+            elif param == "Down 4% or more Today":
+                res = res[res["Down_4_Pct"] == True]
+            elif param == "1-Month 25% Winners":
+                res = res[res["Up_25_1M"] == True]
+            elif param == "1-Month 25% Losers":
+                res = res[res["Down_25_1M"] == True]
+            elif param == "New 52-Week Highs (Mature > 1Yr)":
+                res = res[res["New_52W_High"] == True]
+            elif param == "New IPO/Listing Highs (< 1Yr)":
+                res = res[res["IPO_New_High"] == True]
+        res = res[["Symbol", "Close", "Daily_Pct", "Pct_1M"]].sort_values("Daily_Pct", ascending=False)
+        res = res.rename(columns={"Daily_Pct": "Daily_%_Change", "Pct_1M": "1M_%_Change"})
+        st.write(f"**Found {len(res)} matching VIP active stocks** for {selected_date_display}:")
+        st.dataframe(res, use_container_width=True, height=350)
+    else:
+        st.info("👆 Select one or more parameters above to filter the VIP stock list.")
 else:
     if (
         st.session_state.analysis_date.normalize() == today_ist
@@ -790,7 +788,8 @@ else:
     else:
         st.info("💡 No EOD stock drill-down data is available for this date. The EOD trailing cache stores approximately the latest 450 days.")
 
-t_col, _ = st.columns([1.5, 4])
+st.markdown("<br><hr>", unsafe_allow_html=True)
+bot_col, _ = st.columns([1.5, 4])
 with bot_col:
     footer_status = status_for_selected_date(st.session_state.analysis_date)
     st.markdown(f"<div style='text-align: center; font-size: 11px; color: #94a3b8; margin-bottom: 5px;'>{footer_status}</div>", unsafe_allow_html=True)
