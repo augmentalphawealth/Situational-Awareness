@@ -437,71 +437,38 @@ def get_bar_color(val):
 
 
 with st.container(border=True):
-    top_c1, top_c2 = st.columns([1.6, 2.4])
+    top_c1, top_c2 = st.columns([1.2, 2.8])
     with top_c1:
-        daily_col, avg_col = st.columns(2)
+        if is_selected_today_live:
+            score_status = "LIVE INTRADAY" if is_live_active else "INTRADAY — EOD PENDING"
+            score_label = f"MOMENTUM HEALTH SCORE ({score_status})"
+        else:
+            score_label = "MOMENTUM HEALTH SCORE (EOD)"
+        avg_value = f"{regime_score:.1f}" if pd.notna(regime_score) else "N/A"
+        avg_status_text = (
+            "PROVISIONAL — LIVE PARTIAL DAY INCLUDED"
+            if is_selected_today_live
+            else regime_score_status
+        )
         daily_score_color = get_bar_color(score)
-        with daily_col:
-            daily_status = "LIVE" if is_selected_today_live else "EOD"
-            st.markdown(f"""
-                <div style='text-align: center; padding-top: 12px;'>
-                    <div class='card-title'>DAILY SCORE · {daily_status}</div>
-                    <div class='metric-value' style='font-size: 34px; color: {daily_score_color};'>{score}<span style='font-size: 14px; color: #94a3b8;'>/100</span></div>
-                    <div style='font-size: 10px; color: #64748b; font-weight: 600;'>Fast Breadth: {p_fast:.1f}%</div>
-                </div>
-            """, unsafe_allow_html=True)
-        with avg_col:
-            avg_value = f"{regime_score:.1f}" if pd.notna(regime_score) else "N/A"
-            avg_status_color = "#d97706" if is_selected_today_live else "#64748b"
-            avg_status_text = "PROVISIONAL" if is_selected_today_live else regime_score_status
-            st.markdown(f"""
-                <div style='text-align: center; padding-top: 12px;'>
-                    <div class='card-title'>5-DAY REGIME AVG</div>
-                    <div class='metric-value' style='font-size: 34px; color: {score_color};'>{avg_value}<span style='font-size: 14px; color: #94a3b8;'>/100</span></div>
-                    <div style='font-size: 10px; color: {avg_status_color}; font-weight: 800;'>{avg_status_text}</div>
-                </div>
-            """, unsafe_allow_html=True)
+        st.markdown(f"""
+            <div style='text-align: center; padding-top: 10px;'>
+                <div class='card-title' style='font-size: 12px;'>{score_label}</div>
+                <div class='metric-value' style='font-size: 44px; color: {daily_score_color};'>{score} <span style='font-size: 18px; color: #94a3b8;'>/ 100</span></div>
+                <div style='font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px;'>Fast Breadth (P_Fast): {p_fast:.1f}%</div>
+                <div style='font-size: 11px; color: {score_color}; font-weight: 800; margin-top: 5px;'>5-Day Average: {avg_value}/100</div>
+                <div style='font-size: 9px; color: {"#d97706" if is_selected_today_live else "#64748b"}; font-weight: 700;'>{avg_status_text}</div>
+            </div>
+        """, unsafe_allow_html=True)
     with top_c2:
         st.markdown("<div class='card-title'>10-Day Health Trend</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc'>Bars = daily Composite Score. Line = rolling five-session regime average.</div>", unsafe_allow_html=True)
-        fig_m1 = go.Figure()
-        fig_m1.add_trace(go.Bar(
-            x=df_10d["Date_Str"],
-            y=df_10d["Composite_Score"],
-            name="Daily Score",
-            marker_color=[get_bar_color(v) for v in df_10d["Composite_Score"]],
-            text=df_10d["Composite_Score"],
-            textposition="outside",
-            textangle=0,
-            hovertemplate="Daily Score: <b>%{y}</b><extra></extra>",
-        ))
-        fig_m1.add_trace(go.Scatter(
-            x=df_10d["Date_Str"],
-            y=df_10d["Composite_Score_5D"],
-            name="5-Day Average",
-            mode="lines+markers",
-            line=dict(color="#0f172a", width=2),
-            marker=dict(size=5),
-            connectgaps=False,
-            hovertemplate="5-Day Average: <b>%{y:.1f}</b><extra></extra>",
-        ))
-        fig_m1.update_layout(
-            height=150,
-            margin=dict(l=10, r=10, t=18, b=0),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1, font=dict(size=9)),
-            barmode="overlay",
-        )
+        st.markdown("<div class='chart-desc'>Tracks EOD history plus today's live regime score when available.</div>", unsafe_allow_html=True)
+        fig_m1 = go.Figure(go.Bar(x=df_10d["Date_Str"], y=df_10d["Composite_Score"], marker_color=[get_bar_color(v) for v in df_10d["Composite_Score"]], text=df_10d["Composite_Score"], textposition="outside", textangle=0, hovertemplate="Score: <b>%{y}</b><extra></extra>"))
+        fig_m1.update_layout(height=120, margin=dict(l=10, r=10, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
         fig_m1.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
         fig_m1.update_yaxes(visible=False, range=[0, 115], fixedrange=True)
         st.plotly_chart(fig_m1, use_container_width=True, config={"displayModeBar": False})
-    regime_status_banner = "PROVISIONAL — TODAY'S LIVE SNAPSHOT INCLUDED" if is_selected_today_live else regime_score_status
-    st.markdown(
-        f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone} &nbsp; | &nbsp; REGIME SCORE: {regime_score_display} &nbsp; | &nbsp; {regime_status_banner}</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
 
 advances = safe_int(latest.get("Advances", 0))
 declines = safe_int(latest.get("Declines", 0))
@@ -545,12 +512,10 @@ with hero_col1:
 with hero_col2:
     with st.container(border=True):
         st.markdown("<div class='card-title' style='margin-top: 5px; margin-left: 10px;'>TACTICAL COMMAND CENTER</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Portfolio tactics are controlled by the five-session average. Today's score remains visible as an early-warning signal.</div>", unsafe_allow_html=True)
-        st.markdown("<div style='padding: 0px 10px; font-size: 12px; margin-bottom: 7px;'><b>5-Day Regime Score:</b> " + f"<span style='color:{score_color}; font-weight:800;'>{regime_score_display}</span> &nbsp; <span style='color:#64748b;'>({regime_score_status})</span></div>", unsafe_allow_html=True)
+        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Action plan is dictated by the five-day average score; daily market drivers remain current.</div>", unsafe_allow_html=True)
         st.markdown("<div style='padding: 0px 10px; font-size: 13px;'>" + f"<div style='margin-bottom: 6px;'><b>🎯 Target Asset:</b> <span style='color: #334155;'>{tacs['asset']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>⚖️ Position Sizing:</b> <span style='color: #334155;'>{tacs['sizing']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>🛡️ Risk / Stop-Loss:</b> <span style='color: #334155;'>{tacs['risk']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>💰 Profit Strategy:</b> <span style='color: #334155;'>{tacs['profit']}</span></div></div>", unsafe_allow_html=True)
         st.markdown("<hr style='margin: 8px 0px;'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title' style='margin-left: 10px;'>DECISION ENGINE: KEY REGIME DRIVERS</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Driver values below are today's actual readings (unsmoothed). Regime interpretation uses the five-session average.</div>", unsafe_allow_html=True)
         wr_c = "#16a34a" if ft_rate >= 45 else "#dc2626"
         wr5_c = "#16a34a" if ft_rate_5d >= 45 else "#dc2626"
         p20_c = "#16a34a" if p_fast >= 50 else "#dc2626"
@@ -608,17 +573,47 @@ with hero_col2:
         vol_ratio = latest.get("Volume_Ratio", np.nan)
         if not pd.isna(vol_ratio):
             if vol_ratio >= 2.0:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#16a34a;'>(Heavy Accumulation)</span></div>")
+                if pd.notna(regime_score) and regime_score >= 51:
+                    volume_text, volume_color, volume_icon = "Heavy accumulation confirms the stronger five-day regime.", "#16a34a", "🟢"
+                elif pd.notna(regime_score) and regime_score <= 31:
+                    volume_text, volume_color, volume_icon = "Demand spike inside a weak regime; recovery is not yet confirmed.", "#d97706", "⚠️"
+                else:
+                    volume_text, volume_color, volume_icon = "Heavy accumulation on today's session; five-day regime is transitional or unavailable.", "#d97706", "⚠️"
+                extremes.append(f"<div style='margin-bottom: 3px;'>{volume_icon} <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:{volume_color};'>({volume_text})</span></div>")
             elif vol_ratio <= 0.5:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#dc2626;'>(Heavy Distribution)</span></div>")
+                if pd.notna(regime_score) and regime_score >= 51:
+                    volume_text = "Heavy distribution conflicts with the stronger five-day regime; pullback risk is rising."
+                elif pd.notna(regime_score) and regime_score <= 31:
+                    volume_text = "Heavy distribution confirms the weak five-day regime."
+                else:
+                    volume_text = "Heavy distribution during a transitional or unconfirmed regime."
+                extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#dc2626;'>({volume_text})</span></div>")
         net_hl = safe_int(latest.get("Net_52W_High_Low", 0))
         if net_hl >= 50:
-            extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Net 52W H/L: +{net_hl}</b> <span style='color:#16a34a;'>(Broad Expansion)</span></div>")
+            if pd.notna(regime_score) and regime_score >= 51:
+                net_hl_text = "Broad expansion confirms the stronger five-day regime."
+            elif pd.notna(regime_score) and regime_score <= 31:
+                net_hl_text = "Breadth expansion inside a weak regime; broader confirmation is still needed."
+            else:
+                net_hl_text = "Today's broad expansion is supportive; five-day regime remains transitional or unavailable."
+            extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Net 52W H/L: +{net_hl}</b> <span style='color:#16a34a;'>({net_hl_text})</span></div>")
         elif net_hl <= -50:
-            extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Net 52W H/L: {net_hl}</b> <span style='color:#dc2626;'>(Broad Capitulation)</span></div>")
+            if pd.notna(regime_score) and regime_score >= 51:
+                net_hl_text = "Negative breadth divergence against the stronger five-day regime; deterioration warning."
+            elif pd.notna(regime_score) and regime_score <= 31:
+                net_hl_text = "Broad capitulation confirms the weak five-day regime."
+            else:
+                net_hl_text = "Today's broad deterioration is negative; five-day regime remains transitional or unavailable."
+            extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Net 52W H/L: {net_hl}</b> <span style='color:#dc2626;'>({net_hl_text})</span></div>")
         ipo_highs = safe_int(latest.get("IPO_New_Highs", 0))
         if ipo_highs >= 15:
-            extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>IPO Highs: {ipo_highs}</b> <span style='color:#f97316;'>(Speculative Frenzy. Market is hunting for high-beta risk.)</span></div>")
+            if pd.notna(regime_score) and regime_score >= 51:
+                ipo_text = "Speculative participation is elevated within the stronger five-day regime."
+            elif pd.notna(regime_score) and regime_score <= 31:
+                ipo_text = "Speculative leadership inside a weak regime; breadth may be narrow."
+            else:
+                ipo_text = "Speculative activity is elevated; check whether broader breadth confirms it."
+            extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>IPO Highs: {ipo_highs}</b> <span style='color:#f97316;'>({ipo_text})</span></div>")
         if extremes:
             regime_html += "<div style='border-top: 1px dashed #cbd5e1; margin-top: 8px; padding-top: 8px; padding-left: 10px;'>" + "<div style='font-size: 11px; font-weight: 800; color: #f97316; margin-bottom: 4px; text-transform: uppercase;'>⚠️ Today's Extremes — Interpreted Against 5-Day Regime:</div>" + "".join(extremes) + "</div>"
         st.markdown(regime_html, unsafe_allow_html=True)
