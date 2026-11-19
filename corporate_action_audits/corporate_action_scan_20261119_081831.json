@@ -1,0 +1,20 @@
+{
+  "run_time_ist": "2026-11-19T08:18:31.751679+05:30",
+  "verify_dates": [
+    "2026-11-12",
+    "2026-11-13",
+    "2026-11-16",
+    "2026-11-17",
+    "2026-11-18"
+  ],
+  "threshold_pct": 2.0,
+  "symbols_scanned": 2552,
+  "candidate_symbols": [
+    "BMWVENTLTD",
+    "BNAGROCHEM",
+    "PREMCO"
+  ],
+  "candidate_count": 3,
+  "scan_failure_count": 0,
+  "scan_failures": []
+}
