@@ -450,12 +450,18 @@ with st.container(border=True):
         avg_status_color = "#d97706" if is_selected_today_live else "#64748b"
         daily_score_color = get_bar_color(score)
         st.markdown(f"""
-            <div style='text-align: center; padding-top: 10px;'>
+            <div style='text-align: center; padding-top: 4px;'>
                 <div class='card-title' style='font-size: 12px;'>{score_label}</div>
-                <div class='metric-value' style='font-size: 44px; color: {daily_score_color};'>{score} <span style='font-size: 18px; color: #94a3b8;'>/ 100</span></div>
+                <div style='font-size: 40px; line-height: 1.12; font-weight: 800; color: {daily_score_color}; margin-top: 2px;'>
+                    {score}<span style='font-size: 17px; color: #94a3b8; font-weight: 700;'> / 100</span>
+                </div>
                 <div style='font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px;'>Fast Breadth (P_Fast): {p_fast:.1f}%</div>
-                <div style='font-size: 11px; color: {score_color}; font-weight: 800; margin-top: 5px;'>5-Day Average: {avg_value}/100</div>
-                <div style='font-size: 9px; color: {avg_status_color}; font-weight: 700;'>{avg_status_text}</div>
+                <div style='border-top: 1px solid #e2e8f0; margin: 10px 18px 8px 18px;'></div>
+                <div class='card-title' style='font-size: 11px;'>5-DAY REGIME AVERAGE</div>
+                <div style='font-size: 40px; line-height: 1.12; font-weight: 800; color: {score_color}; margin-top: 2px;'>
+                    {avg_value}<span style='font-size: 17px; color: #94a3b8; font-weight: 700;'> / 100</span>
+                </div>
+                <div style='font-size: 9px; color: {avg_status_color}; font-weight: 800; margin-top: 3px;'>{avg_status_text}</div>
             </div>
         """, unsafe_allow_html=True)
     with top_c2:
