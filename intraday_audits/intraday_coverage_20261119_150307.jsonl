@@ -1,0 +1,10 @@
+{"Symbol": "ENNATURE", "Date": "2026-11-19 00:00:00", "Reason": "current_nse_eq_without_historical_data"}
+{"Symbol": "IGLSPIRITS", "Date": "2026-11-19 00:00:00", "Reason": "current_nse_eq_without_historical_data"}
+{"Symbol": "ASSAMENT", "Date": "2026-11-19 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "SIMPLXREA", "Date": "2026-11-19 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "VASUPRADA", "Date": "2026-11-19 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "WHBRADY", "Date": "2026-11-19 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Date": "2026-11-19 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "ASSAMENT"}
+{"Date": "2026-11-19 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "SIMPLXREA"}
+{"Date": "2026-11-19 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "VASUPRADA"}
+{"Date": "2026-11-19 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "WHBRADY"}
