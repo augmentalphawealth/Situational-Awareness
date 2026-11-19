@@ -370,7 +370,6 @@ score = safe_int(latest.get("Composite_Score", 0))
 regime_score = pd.to_numeric(
     latest.get("Composite_Score_5D", np.nan), errors="coerce"
 )
-score_history_count = int(df_filtered["Composite_Score"].tail(5).count())
 regime_score_status = (
     "PROVISIONAL — LIVE SNAPSHOT"
     if is_selected_today_live
@@ -564,17 +563,48 @@ with hero_col2:
         extremes = []
         latest_trin = latest.get("TRIN", np.nan)
         if not pd.isna(latest_trin):
-            if latest_trin >= 1.5 and pd.notna(regime_score) and regime_score <= 31:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Panic Capitulation. Weak regime + heavy selling = Contrarian Bottom Signal.)</span></div>")
-            elif latest_trin <= 0.7 and pd.notna(regime_score) and regime_score >= 51:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand. Strong regime + heavy buying = Trend Confirmed.)</span></div>")
+            if latest_trin >= 1.5:
+                if pd.isna(regime_score):
+                    trin_text = "Heavy daily selling pressure; five-session regime context is unavailable."
+                elif regime_score <= 31:
+                    trin_text = "Panic Capitulation. Weak five-session regime + heavy selling = potential contrarian bottom signal."
+                elif regime_score >= 51:
+                    trin_text = "Acute selling pressure inside an established stronger regime; treat as a pullback warning, not an automatic regime flip."
+                else:
+                    trin_text = "Heavy daily selling pressure while the five-session regime remains transitional."
+                extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>TRIN: {latest_trin:.2f}</b> <span style='color:#d97706;'>({trin_text})</span></div>")
+            elif latest_trin <= 0.7:
+                if pd.isna(regime_score):
+                    trin_text = "Strong daily demand; five-session regime context is unavailable."
+                elif regime_score >= 51:
+                    trin_text = "Aggressive demand confirms the established stronger regime."
+                elif regime_score <= 31:
+                    trin_text = "Strong daily demand inside a weak regime; possible early recovery, not yet confirmed."
+                else:
+                    trin_text = "Strong daily demand while the five-session regime remains transitional."
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>({trin_text})</span></div>")
         latest_mco = latest.get("MCO", np.nan)
         if not pd.isna(latest_mco):
             if latest_mco >= 50:
-                text = "Early Ignition Thrust. Surging momentum from the bottom. Watch for base breakouts." if pd.notna(regime_score) and regime_score <= 31 else "Power Trend. Short-term breadth is hot and institutional buying is aggressive."
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>({text})</span></div>")
-            elif latest_mco <= -50 and pd.notna(regime_score) and regime_score <= 31:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Deep Washout. Extreme short-term oversold. Look for the turn.)</span></div>")
+                if pd.isna(regime_score):
+                    mco_text = "Strong positive daily breadth momentum; five-session regime context is unavailable."
+                elif regime_score <= 31:
+                    mco_text = "Early Ignition Thrust. Surging daily momentum from a weak regime; watch for base breakouts."
+                elif regime_score >= 51:
+                    mco_text = "Power Trend. Strong daily breadth momentum is confirming the established regime."
+                else:
+                    mco_text = "Strong daily breadth thrust; the five-session regime is improving but not yet firmly confirmed."
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>({mco_text})</span></div>")
+            elif latest_mco <= -50:
+                if pd.isna(regime_score):
+                    mco_text = "Deep negative daily breadth momentum; five-session regime context is unavailable."
+                elif regime_score <= 31:
+                    mco_text = "Deep Washout. Extreme short-term oversold conditions within a weak regime; watch for the turn."
+                elif regime_score >= 51:
+                    mco_text = "Short-term breadth deterioration inside an established stronger regime; pullback risk is rising."
+                else:
+                    mco_text = "Short-term breadth deterioration while the five-session regime remains transitional."
+                extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>MCO: {latest_mco:.1f}</b> <span style='color:#d97706;'>({mco_text})</span></div>")
         vol_ratio = latest.get("Volume_Ratio", np.nan)
         if not pd.isna(vol_ratio):
             if vol_ratio >= 2.0:
