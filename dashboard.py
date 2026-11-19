@@ -348,6 +348,15 @@ if df_filtered.empty:
     st.warning("No trading data available on or before this date.")
     st.stop()
 
+# Preserve the underlying daily Composite Score. The five-session average is
+# a separate regime-confirmation layer, not a re-scoring of daily indicators.
+df_filtered["Composite_Score"] = pd.to_numeric(
+    df_filtered["Composite_Score"], errors="coerce"
+)
+df_filtered["Composite_Score_5D"] = (
+    df_filtered["Composite_Score"].rolling(window=5, min_periods=5).mean()
+)
+
 latest = df_filtered.iloc[-1].copy()
 prev = df_filtered.iloc[-2].copy() if len(df_filtered) > 1 else latest.copy()
 
@@ -358,6 +367,15 @@ is_selected_today_live = (
 )
 
 score = safe_int(latest.get("Composite_Score", 0))
+regime_score = pd.to_numeric(
+    latest.get("Composite_Score_5D", np.nan), errors="coerce"
+)
+regime_score_status = (
+    "PROVISIONAL — LIVE SNAPSHOT"
+    if is_selected_today_live
+    else ("EOD FINAL" if st.session_state.analysis_date.normalize() == today_ist else "HISTORICAL EOD")
+)
+
 p_fast = pd.to_numeric(latest.get("Pct_Above_20_EMA", 0), errors="coerce")
 p_mid = pd.to_numeric(latest.get("Pct_Above_50_EMA", 0), errors="coerce")
 p_fast = 0 if pd.isna(p_fast) else p_fast
@@ -371,16 +389,25 @@ t3_breakouts_5d = safe_int(latest.get("T3_Breakouts_5D", 0))
 t3_wins_5d = safe_int(latest.get("T3_Wins_5D", 0))
 ft_rate_5d = (t3_wins_5d / t3_breakouts_5d * 100) if t3_breakouts_5d > 0 else 0
 
-if score >= 71:
+# The Tactical Command Center is controlled only by the five-session regime score.
+if pd.isna(regime_score):
+    action_zone, score_color = "BUILDING 5-DAY HISTORY", "#64748b"
+    tacs = {
+        "asset": "No regime allocation until five valid sessions are available",
+        "sizing": "Use existing risk controls; avoid score-driven size changes",
+        "risk": "Do not infer a regime from an incomplete average",
+        "profit": "Continue monitoring daily market conditions",
+    }
+elif regime_score >= 71:
     action_zone, score_color = "AGGRESSIVE MTF ZONE", "#22c55e"
     tacs = {"asset": "High-RS VCP Stocks", "sizing": "100% Full Sizing", "risk": "Standard 5-7% Hard Stops", "profit": "Aggressively trade valid VCP breakouts"}
-elif score >= 51:
+elif regime_score >= 51:
     action_zone, score_color = "CONFIRMED UPTREND", "#84cc16"
     tacs = {"asset": "50% Broad ETFs & 50% High-RS VCP Stocks", "sizing": "50% - 75% Sizing", "risk": "Balanced Risk", "profit": "Selective buying on A+ setups only"}
-elif score >= 31:
+elif regime_score >= 31:
     action_zone, score_color = "DEATH CHOP ZONE", "#f97316"
     tacs = {"asset": "Broad ETFs ONLY", "sizing": "50% Max Sizing", "risk": "0% VCP Stocks", "profit": "Use ETFs to capture broad swings safely"}
-elif score >= 11:
+elif regime_score >= 11:
     action_zone, score_color = "RISK-OFF / DEFENSIVE", "#ef4444"
     tacs = {"asset": "Broad ETFs ONLY", "sizing": "25% Max Sizing", "risk": "Strict 5-7% Base Stops", "profit": "Defensive allocation, 0% VCP Stocks"}
 else:
@@ -414,11 +441,21 @@ with st.container(border=True):
             score_label = f"MOMENTUM HEALTH SCORE ({score_status})"
         else:
             score_label = "MOMENTUM HEALTH SCORE (EOD)"
+        avg_value = f"{regime_score:.1f}" if pd.notna(regime_score) else "N/A"
+        avg_status_text = (
+            "PROVISIONAL — LIVE PARTIAL DAY INCLUDED"
+            if is_selected_today_live
+            else regime_score_status
+        )
+        avg_status_color = "#d97706" if is_selected_today_live else "#64748b"
+        daily_score_color = get_bar_color(score)
         st.markdown(f"""
             <div style='text-align: center; padding-top: 10px;'>
                 <div class='card-title' style='font-size: 12px;'>{score_label}</div>
-                <div class='metric-value' style='font-size: 44px; color: {score_color};'>{score} <span style='font-size: 18px; color: #94a3b8;'>/ 100</span></div>
+                <div class='metric-value' style='font-size: 44px; color: {daily_score_color};'>{score} <span style='font-size: 18px; color: #94a3b8;'>/ 100</span></div>
                 <div style='font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px;'>Fast Breadth (P_Fast): {p_fast:.1f}%</div>
+                <div style='font-size: 11px; color: {score_color}; font-weight: 800; margin-top: 5px;'>5-Day Average: {avg_value}/100</div>
+                <div style='font-size: 9px; color: {avg_status_color}; font-weight: 700;'>{avg_status_text}</div>
             </div>
         """, unsafe_allow_html=True)
     with top_c2:
@@ -473,7 +510,7 @@ with hero_col1:
 with hero_col2:
     with st.container(border=True):
         st.markdown("<div class='card-title' style='margin-top: 5px; margin-left: 10px;'>TACTICAL COMMAND CENTER</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Your immediate action plan dynamically dictated by the Momentum Health Score.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Action plan is dictated by the five-day average score; daily market drivers remain current.</div>", unsafe_allow_html=True)
         st.markdown("<div style='padding: 0px 10px; font-size: 13px;'>" + f"<div style='margin-bottom: 6px;'><b>🎯 Target Asset:</b> <span style='color: #334155;'>{tacs['asset']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>⚖️ Position Sizing:</b> <span style='color: #334155;'>{tacs['sizing']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>🛡️ Risk / Stop-Loss:</b> <span style='color: #334155;'>{tacs['risk']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>💰 Profit Strategy:</b> <span style='color: #334155;'>{tacs['profit']}</span></div></div>", unsafe_allow_html=True)
         st.markdown("<hr style='margin: 8px 0px;'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title' style='margin-left: 10px;'>DECISION ENGINE: KEY REGIME DRIVERS</div>", unsafe_allow_html=True)
@@ -489,33 +526,94 @@ with hero_col2:
         extremes = []
         latest_trin = latest.get("TRIN", np.nan)
         if not pd.isna(latest_trin):
-            if latest_trin >= 1.5 and score <= 31:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Panic Capitulation. Weak regime + heavy selling = Contrarian Bottom Signal.)</span></div>")
-            elif latest_trin <= 0.7 and score >= 51:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand. Strong regime + heavy buying = Trend Confirmed.)</span></div>")
+            if latest_trin >= 1.5:
+                if pd.isna(regime_score):
+                    trin_text = "Heavy daily selling pressure; five-session regime context is unavailable."
+                elif regime_score <= 31:
+                    trin_text = "Panic Capitulation. Weak five-session regime + heavy selling = potential contrarian bottom signal."
+                elif regime_score >= 51:
+                    trin_text = "Acute selling pressure inside an established stronger regime; treat as a pullback warning, not an automatic regime flip."
+                else:
+                    trin_text = "Heavy daily selling pressure while the five-session regime remains transitional."
+                extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>TRIN: {latest_trin:.2f}</b> <span style='color:#d97706;'>({trin_text})</span></div>")
+            elif latest_trin <= 0.7:
+                if pd.isna(regime_score):
+                    trin_text = "Strong daily demand; five-session regime context is unavailable."
+                elif regime_score >= 51:
+                    trin_text = "Aggressive demand confirms the established stronger regime."
+                elif regime_score <= 31:
+                    trin_text = "Strong daily demand inside a weak regime; possible early recovery, not yet confirmed."
+                else:
+                    trin_text = "Strong daily demand while the five-session regime remains transitional."
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>({trin_text})</span></div>")
         latest_mco = latest.get("MCO", np.nan)
         if not pd.isna(latest_mco):
             if latest_mco >= 50:
-                text = "Early Ignition Thrust. Surging momentum from the bottom. Watch for base breakouts." if score <= 31 else "Power Trend. Short-term breadth is hot and institutional buying is aggressive."
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>({text})</span></div>")
-            elif latest_mco <= -50 and score <= 31:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Deep Washout. Extreme short-term oversold. Look for the turn.)</span></div>")
+                if pd.isna(regime_score):
+                    mco_text = "Strong positive daily breadth momentum; five-session regime context is unavailable."
+                elif regime_score <= 31:
+                    mco_text = "Early Ignition Thrust. Surging daily momentum from a weak regime; watch for base breakouts."
+                elif regime_score >= 51:
+                    mco_text = "Power Trend. Strong daily breadth momentum is confirming the established regime."
+                else:
+                    mco_text = "Strong daily breadth thrust; the five-session regime is improving but not yet firmly confirmed."
+                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>({mco_text})</span></div>")
+            elif latest_mco <= -50:
+                if pd.isna(regime_score):
+                    mco_text = "Deep negative daily breadth momentum; five-session regime context is unavailable."
+                elif regime_score <= 31:
+                    mco_text = "Deep Washout. Extreme short-term oversold conditions within a weak regime; watch for the turn."
+                elif regime_score >= 51:
+                    mco_text = "Short-term breadth deterioration inside an established stronger regime; pullback risk is rising."
+                else:
+                    mco_text = "Short-term breadth deterioration while the five-session regime remains transitional."
+                extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>MCO: {latest_mco:.1f}</b> <span style='color:#d97706;'>({mco_text})</span></div>")
         vol_ratio = latest.get("Volume_Ratio", np.nan)
         if not pd.isna(vol_ratio):
             if vol_ratio >= 2.0:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#16a34a;'>(Heavy Accumulation)</span></div>")
+                if pd.notna(regime_score) and regime_score >= 51:
+                    volume_text, volume_color, volume_icon = "Heavy accumulation confirms the stronger five-day regime.", "#16a34a", "🟢"
+                elif pd.notna(regime_score) and regime_score <= 31:
+                    volume_text, volume_color, volume_icon = "Demand spike inside a weak regime; recovery is not yet confirmed.", "#d97706", "⚠️"
+                else:
+                    volume_text, volume_color, volume_icon = "Heavy accumulation on today's session; five-day regime is transitional or unavailable.", "#d97706", "⚠️"
+                extremes.append(f"<div style='margin-bottom: 3px;'>{volume_icon} <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:{volume_color};'>({volume_text})</span></div>")
             elif vol_ratio <= 0.5:
-                extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#dc2626;'>(Heavy Distribution)</span></div>")
+                if pd.notna(regime_score) and regime_score >= 51:
+                    volume_text = "Heavy distribution conflicts with the stronger five-day regime; pullback risk is rising."
+                elif pd.notna(regime_score) and regime_score <= 31:
+                    volume_text = "Heavy distribution confirms the weak five-day regime."
+                else:
+                    volume_text = "Heavy distribution during a transitional or unconfirmed regime."
+                extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Vol Ratio: {vol_ratio:.2f}</b> <span style='color:#dc2626;'>({volume_text})</span></div>")
         net_hl = safe_int(latest.get("Net_52W_High_Low", 0))
         if net_hl >= 50:
-            extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Net 52W H/L: +{net_hl}</b> <span style='color:#16a34a;'>(Broad Expansion)</span></div>")
+            if pd.notna(regime_score) and regime_score >= 51:
+                net_hl_text = "Broad expansion confirms the stronger five-day regime."
+            elif pd.notna(regime_score) and regime_score <= 31:
+                net_hl_text = "Breadth expansion inside a weak regime; broader confirmation is still needed."
+            else:
+                net_hl_text = "Today's broad expansion is supportive; five-day regime remains transitional or unavailable."
+            extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>Net 52W H/L: +{net_hl}</b> <span style='color:#16a34a;'>({net_hl_text})</span></div>")
         elif net_hl <= -50:
-            extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Net 52W H/L: {net_hl}</b> <span style='color:#dc2626;'>(Broad Capitulation)</span></div>")
+            if pd.notna(regime_score) and regime_score >= 51:
+                net_hl_text = "Negative breadth divergence against the stronger five-day regime; deterioration warning."
+            elif pd.notna(regime_score) and regime_score <= 31:
+                net_hl_text = "Broad capitulation confirms the weak five-day regime."
+            else:
+                net_hl_text = "Today's broad deterioration is negative; five-day regime remains transitional or unavailable."
+            extremes.append(f"<div style='margin-bottom: 3px;'>🚨 <b>Net 52W H/L: {net_hl}</b> <span style='color:#dc2626;'>({net_hl_text})</span></div>")
         ipo_highs = safe_int(latest.get("IPO_New_Highs", 0))
         if ipo_highs >= 15:
-            extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>IPO Highs: {ipo_highs}</b> <span style='color:#f97316;'>(Speculative Frenzy. Market is hunting for high-beta risk.)</span></div>")
+            if pd.notna(regime_score) and regime_score >= 51:
+                ipo_text = "Speculative participation is elevated within the stronger five-day regime."
+            elif pd.notna(regime_score) and regime_score <= 31:
+                ipo_text = "Speculative leadership inside a weak regime; breadth may be narrow."
+            else:
+                ipo_text = "Speculative activity is elevated; check whether broader breadth confirms it."
+            extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>IPO Highs: {ipo_highs}</b> <span style='color:#f97316;'>({ipo_text})</span></div>")
         if extremes:
-            regime_html += "<div style='border-top: 1px dashed #cbd5e1; margin-top: 8px; padding-top: 8px; padding-left: 10px;'>" + "<div style='font-size: 11px; font-weight: 800; color: #f97316; margin-bottom: 4px; text-transform: uppercase;'>⚠️ Actionable Extremes Triggered:</div>" + "".join(extremes) + "</div>"
+            regime_html += "<div style='border-top: 1px dashed #cbd5e1; margin-top: 8px; padding-top: 8px; padding-left: 10px;'>" + "<div style='font-size: 11px; font-weight: 800; color: #f97316; margin-bottom: 4px; text-transform: uppercase;'>⚠️ Today's Extremes — Interpreted Against 5-Day Regime:</div>" + "".join(extremes) + "</div>"
         st.markdown(regime_html, unsafe_allow_html=True)
 
 m2, m3 = st.columns(2)
