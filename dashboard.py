@@ -348,6 +348,15 @@ if df_filtered.empty:
     st.warning("No trading data available on or before this date.")
     st.stop()
 
+# Preserve the underlying daily Composite Score. The five-session average is
+# a separate regime-confirmation layer, not a re-scoring of daily indicators.
+df_filtered["Composite_Score"] = pd.to_numeric(
+    df_filtered["Composite_Score"], errors="coerce"
+)
+df_filtered["Composite_Score_5D"] = (
+    df_filtered["Composite_Score"].rolling(window=5, min_periods=5).mean()
+)
+
 latest = df_filtered.iloc[-1].copy()
 prev = df_filtered.iloc[-2].copy() if len(df_filtered) > 1 else latest.copy()
 
@@ -358,6 +367,16 @@ is_selected_today_live = (
 )
 
 score = safe_int(latest.get("Composite_Score", 0))
+regime_score = pd.to_numeric(
+    latest.get("Composite_Score_5D", np.nan), errors="coerce"
+)
+score_history_count = int(df_filtered["Composite_Score"].tail(5).count())
+regime_score_status = (
+    "PROVISIONAL — LIVE SNAPSHOT"
+    if is_selected_today_live
+    else ("EOD FINAL" if st.session_state.analysis_date.normalize() == today_ist else "HISTORICAL EOD")
+)
+
 p_fast = pd.to_numeric(latest.get("Pct_Above_20_EMA", 0), errors="coerce")
 p_mid = pd.to_numeric(latest.get("Pct_Above_50_EMA", 0), errors="coerce")
 p_fast = 0 if pd.isna(p_fast) else p_fast
@@ -371,22 +390,34 @@ t3_breakouts_5d = safe_int(latest.get("T3_Breakouts_5D", 0))
 t3_wins_5d = safe_int(latest.get("T3_Wins_5D", 0))
 ft_rate_5d = (t3_wins_5d / t3_breakouts_5d * 100) if t3_breakouts_5d > 0 else 0
 
-if score >= 71:
+# The Tactical Command Center is controlled only by the five-session regime score.
+if pd.isna(regime_score):
+    action_zone, score_color = "BUILDING 5-DAY HISTORY", "#64748b"
+    tacs = {
+        "asset": "No regime allocation until five valid sessions are available",
+        "sizing": "Use existing risk controls; avoid score-driven size changes",
+        "risk": "Do not infer a regime from an incomplete average",
+        "profit": "Continue monitoring daily market conditions",
+    }
+elif regime_score >= 71:
     action_zone, score_color = "AGGRESSIVE MTF ZONE", "#22c55e"
     tacs = {"asset": "High-RS VCP Stocks", "sizing": "100% Full Sizing", "risk": "Standard 5-7% Hard Stops", "profit": "Aggressively trade valid VCP breakouts"}
-elif score >= 51:
+elif regime_score >= 51:
     action_zone, score_color = "CONFIRMED UPTREND", "#84cc16"
     tacs = {"asset": "50% Broad ETFs & 50% High-RS VCP Stocks", "sizing": "50% - 75% Sizing", "risk": "Balanced Risk", "profit": "Selective buying on A+ setups only"}
-elif score >= 31:
+elif regime_score >= 31:
     action_zone, score_color = "DEATH CHOP ZONE", "#f97316"
     tacs = {"asset": "Broad ETFs ONLY", "sizing": "50% Max Sizing", "risk": "0% VCP Stocks", "profit": "Use ETFs to capture broad swings safely"}
-elif score >= 11:
+elif regime_score >= 11:
     action_zone, score_color = "RISK-OFF / DEFENSIVE", "#ef4444"
     tacs = {"asset": "Broad ETFs ONLY", "sizing": "25% Max Sizing", "risk": "Strict 5-7% Base Stops", "profit": "Defensive allocation, 0% VCP Stocks"}
 else:
     action_zone, score_color = "CAPITULATION WATCH", "#991b1b"
     tacs = {"asset": "CASH", "sizing": "0% (Pure Cash)", "risk": "Sit on hands", "profit": "Build watchlists; wait for a bounce"}
 
+regime_score_display = (
+    f"{regime_score:.1f}/100" if pd.notna(regime_score) else "N/A — need 5 sessions"
+)
 df_10d = df_filtered.tail(10).copy()
 df_10d["Date"] = pd.to_datetime(df_10d["Date"], errors="coerce")
 df_10d = df_10d.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
@@ -407,29 +438,71 @@ def get_bar_color(val):
 
 
 with st.container(border=True):
-    top_c1, top_c2 = st.columns([1.2, 2.8])
+    top_c1, top_c2 = st.columns([1.6, 2.4])
     with top_c1:
-        if is_selected_today_live:
-            score_status = "LIVE INTRADAY" if is_live_active else "INTRADAY — EOD PENDING"
-            score_label = f"MOMENTUM HEALTH SCORE ({score_status})"
-        else:
-            score_label = "MOMENTUM HEALTH SCORE (EOD)"
-        st.markdown(f"""
-            <div style='text-align: center; padding-top: 10px;'>
-                <div class='card-title' style='font-size: 12px;'>{score_label}</div>
-                <div class='metric-value' style='font-size: 44px; color: {score_color};'>{score} <span style='font-size: 18px; color: #94a3b8;'>/ 100</span></div>
-                <div style='font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px;'>Fast Breadth (P_Fast): {p_fast:.1f}%</div>
-            </div>
-        """, unsafe_allow_html=True)
+        daily_col, avg_col = st.columns(2)
+        daily_score_color = get_bar_color(score)
+        with daily_col:
+            daily_status = "LIVE" if is_selected_today_live else "EOD"
+            st.markdown(f"""
+                <div style='text-align: center; padding-top: 12px;'>
+                    <div class='card-title'>DAILY SCORE · {daily_status}</div>
+                    <div class='metric-value' style='font-size: 34px; color: {daily_score_color};'>{score}<span style='font-size: 14px; color: #94a3b8;'>/100</span></div>
+                    <div style='font-size: 10px; color: #64748b; font-weight: 600;'>Fast Breadth: {p_fast:.1f}%</div>
+                </div>
+            """, unsafe_allow_html=True)
+        with avg_col:
+            avg_value = f"{regime_score:.1f}" if pd.notna(regime_score) else "N/A"
+            avg_status_color = "#d97706" if is_selected_today_live else "#64748b"
+            avg_status_text = "PROVISIONAL" if is_selected_today_live else regime_score_status
+            st.markdown(f"""
+                <div style='text-align: center; padding-top: 12px;'>
+                    <div class='card-title'>5-DAY REGIME AVG</div>
+                    <div class='metric-value' style='font-size: 34px; color: {score_color};'>{avg_value}<span style='font-size: 14px; color: #94a3b8;'>/100</span></div>
+                    <div style='font-size: 10px; color: {avg_status_color}; font-weight: 800;'>{avg_status_text}</div>
+                </div>
+            """, unsafe_allow_html=True)
     with top_c2:
         st.markdown("<div class='card-title'>10-Day Health Trend</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc'>Tracks EOD history plus today's live regime score when available.</div>", unsafe_allow_html=True)
-        fig_m1 = go.Figure(go.Bar(x=df_10d["Date_Str"], y=df_10d["Composite_Score"], marker_color=[get_bar_color(v) for v in df_10d["Composite_Score"]], text=df_10d["Composite_Score"], textposition="outside", textangle=0, hovertemplate="Score: <b>%{y}</b><extra></extra>"))
-        fig_m1.update_layout(height=120, margin=dict(l=10, r=10, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
+        st.markdown("<div class='chart-desc'>Bars = daily Composite Score. Line = rolling five-session regime average.</div>", unsafe_allow_html=True)
+        fig_m1 = go.Figure()
+        fig_m1.add_trace(go.Bar(
+            x=df_10d["Date_Str"],
+            y=df_10d["Composite_Score"],
+            name="Daily Score",
+            marker_color=[get_bar_color(v) for v in df_10d["Composite_Score"]],
+            text=df_10d["Composite_Score"],
+            textposition="outside",
+            textangle=0,
+            hovertemplate="Daily Score: <b>%{y}</b><extra></extra>",
+        ))
+        fig_m1.add_trace(go.Scatter(
+            x=df_10d["Date_Str"],
+            y=df_10d["Composite_Score_5D"],
+            name="5-Day Average",
+            mode="lines+markers",
+            line=dict(color="#0f172a", width=2),
+            marker=dict(size=5),
+            connectgaps=False,
+            hovertemplate="5-Day Average: <b>%{y:.1f}</b><extra></extra>",
+        ))
+        fig_m1.update_layout(
+            height=150,
+            margin=dict(l=10, r=10, t=18, b=0),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1, font=dict(size=9)),
+            barmode="overlay",
+        )
         fig_m1.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#94a3b8"))
         fig_m1.update_yaxes(visible=False, range=[0, 115], fixedrange=True)
         st.plotly_chart(fig_m1, use_container_width=True, config={"displayModeBar": False})
-    st.markdown(f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone}</div>", unsafe_allow_html=True)
+    regime_status_banner = "PROVISIONAL — TODAY'S LIVE SNAPSHOT INCLUDED" if is_selected_today_live else regime_score_status
+    st.markdown(
+        f"<div class='action-banner'>🎯 ACTION ZONE: {action_zone} &nbsp; | &nbsp; REGIME SCORE: {regime_score_display} &nbsp; | &nbsp; {regime_status_banner}</div>",
+        unsafe_allow_html=True,
+    )
 
 advances = safe_int(latest.get("Advances", 0))
 declines = safe_int(latest.get("Declines", 0))
@@ -473,10 +546,12 @@ with hero_col1:
 with hero_col2:
     with st.container(border=True):
         st.markdown("<div class='card-title' style='margin-top: 5px; margin-left: 10px;'>TACTICAL COMMAND CENTER</div>", unsafe_allow_html=True)
-        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Your immediate action plan dynamically dictated by the Momentum Health Score.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Portfolio tactics are controlled by the five-session average. Today's score remains visible as an early-warning signal.</div>", unsafe_allow_html=True)
+        st.markdown("<div style='padding: 0px 10px; font-size: 12px; margin-bottom: 7px;'><b>5-Day Regime Score:</b> " + f"<span style='color:{score_color}; font-weight:800;'>{regime_score_display}</span> &nbsp; <span style='color:#64748b;'>({regime_score_status})</span></div>", unsafe_allow_html=True)
         st.markdown("<div style='padding: 0px 10px; font-size: 13px;'>" + f"<div style='margin-bottom: 6px;'><b>🎯 Target Asset:</b> <span style='color: #334155;'>{tacs['asset']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>⚖️ Position Sizing:</b> <span style='color: #334155;'>{tacs['sizing']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>🛡️ Risk / Stop-Loss:</b> <span style='color: #334155;'>{tacs['risk']}</span></div>" + f"<div style='margin-bottom: 6px;'><b>💰 Profit Strategy:</b> <span style='color: #334155;'>{tacs['profit']}</span></div></div>", unsafe_allow_html=True)
         st.markdown("<hr style='margin: 8px 0px;'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title' style='margin-left: 10px;'>DECISION ENGINE: KEY REGIME DRIVERS</div>", unsafe_allow_html=True)
+        st.markdown("<div class='chart-desc' style='margin-left: 10px;'>Driver values below are today's actual readings (unsmoothed). Regime interpretation uses the five-session average.</div>", unsafe_allow_html=True)
         wr_c = "#16a34a" if ft_rate >= 45 else "#dc2626"
         wr5_c = "#16a34a" if ft_rate_5d >= 45 else "#dc2626"
         p20_c = "#16a34a" if p_fast >= 50 else "#dc2626"
@@ -489,16 +564,16 @@ with hero_col2:
         extremes = []
         latest_trin = latest.get("TRIN", np.nan)
         if not pd.isna(latest_trin):
-            if latest_trin >= 1.5 and score <= 31:
+            if latest_trin >= 1.5 and pd.notna(regime_score) and regime_score <= 31:
                 extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Panic Capitulation. Weak regime + heavy selling = Contrarian Bottom Signal.)</span></div>")
-            elif latest_trin <= 0.7 and score >= 51:
+            elif latest_trin <= 0.7 and pd.notna(regime_score) and regime_score >= 51:
                 extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>TRIN: {latest_trin:.2f}</b> <span style='color:#16a34a;'>(Aggressive Demand. Strong regime + heavy buying = Trend Confirmed.)</span></div>")
         latest_mco = latest.get("MCO", np.nan)
         if not pd.isna(latest_mco):
             if latest_mco >= 50:
-                text = "Early Ignition Thrust. Surging momentum from the bottom. Watch for base breakouts." if score <= 31 else "Power Trend. Short-term breadth is hot and institutional buying is aggressive."
+                text = "Early Ignition Thrust. Surging momentum from the bottom. Watch for base breakouts." if pd.notna(regime_score) and regime_score <= 31 else "Power Trend. Short-term breadth is hot and institutional buying is aggressive."
                 extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: +{latest_mco:.1f}</b> <span style='color:#16a34a;'>({text})</span></div>")
-            elif latest_mco <= -50 and score <= 31:
+            elif latest_mco <= -50 and pd.notna(regime_score) and regime_score <= 31:
                 extremes.append(f"<div style='margin-bottom: 3px;'>🟢 <b>MCO: {latest_mco:.1f}</b> <span style='color:#16a34a;'>(Deep Washout. Extreme short-term oversold. Look for the turn.)</span></div>")
         vol_ratio = latest.get("Volume_Ratio", np.nan)
         if not pd.isna(vol_ratio):
@@ -515,7 +590,7 @@ with hero_col2:
         if ipo_highs >= 15:
             extremes.append(f"<div style='margin-bottom: 3px;'>⚠️ <b>IPO Highs: {ipo_highs}</b> <span style='color:#f97316;'>(Speculative Frenzy. Market is hunting for high-beta risk.)</span></div>")
         if extremes:
-            regime_html += "<div style='border-top: 1px dashed #cbd5e1; margin-top: 8px; padding-top: 8px; padding-left: 10px;'>" + "<div style='font-size: 11px; font-weight: 800; color: #f97316; margin-bottom: 4px; text-transform: uppercase;'>⚠️ Actionable Extremes Triggered:</div>" + "".join(extremes) + "</div>"
+            regime_html += "<div style='border-top: 1px dashed #cbd5e1; margin-top: 8px; padding-top: 8px; padding-left: 10px;'>" + "<div style='font-size: 11px; font-weight: 800; color: #f97316; margin-bottom: 4px; text-transform: uppercase;'>⚠️ Today's Extremes — Interpreted Against 5-Day Regime:</div>" + "".join(extremes) + "</div>"
         st.markdown(regime_html, unsafe_allow_html=True)
 
 m2, m3 = st.columns(2)
