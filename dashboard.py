@@ -414,9 +414,6 @@ else:
     action_zone, score_color = "CAPITULATION WATCH", "#991b1b"
     tacs = {"asset": "CASH", "sizing": "0% (Pure Cash)", "risk": "Sit on hands", "profit": "Build watchlists; wait for a bounce"}
 
-regime_score_display = (
-    f"{regime_score:.1f}/100" if pd.notna(regime_score) else "N/A — need 5 sessions"
-)
 df_10d = df_filtered.tail(10).copy()
 df_10d["Date"] = pd.to_datetime(df_10d["Date"], errors="coerce")
 df_10d = df_10d.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
@@ -450,6 +447,7 @@ with st.container(border=True):
             if is_selected_today_live
             else regime_score_status
         )
+        avg_status_color = "#d97706" if is_selected_today_live else "#64748b"
         daily_score_color = get_bar_color(score)
         st.markdown(f"""
             <div style='text-align: center; padding-top: 10px;'>
@@ -457,7 +455,7 @@ with st.container(border=True):
                 <div class='metric-value' style='font-size: 44px; color: {daily_score_color};'>{score} <span style='font-size: 18px; color: #94a3b8;'>/ 100</span></div>
                 <div style='font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px;'>Fast Breadth (P_Fast): {p_fast:.1f}%</div>
                 <div style='font-size: 11px; color: {score_color}; font-weight: 800; margin-top: 5px;'>5-Day Average: {avg_value}/100</div>
-                <div style='font-size: 9px; color: {"#d97706" if is_selected_today_live else "#64748b"}; font-weight: 700;'>{avg_status_text}</div>
+                <div style='font-size: 9px; color: {avg_status_color}; font-weight: 700;'>{avg_status_text}</div>
             </div>
         """, unsafe_allow_html=True)
     with top_c2:
