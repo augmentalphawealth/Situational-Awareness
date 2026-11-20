@@ -1,0 +1,9 @@
+{
+  "run_time_ist": "2026-11-20T08:17:52.491872+05:30",
+  "failures": [
+    {
+      "Symbol": "BNAGROCHEM",
+      "reason": "empty_full_history"
+    }
+  ]
+}
