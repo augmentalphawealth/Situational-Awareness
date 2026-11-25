@@ -34,7 +34,8 @@ st.markdown("""
 
 REPO_OWNER = "augmentalphawealth"
 REPO_NAME = "Situational-Awareness"
-BRANCH = "main"
+BRANCH = "market-data"
+WORKFLOW_BRANCH = "main"
 
 HISTORICAL_FILE = "historical_breadth_regime_6yr.csv"
 LIVE_AGGREGATE_FILE = "live_intraday_aggregate.csv"
@@ -181,7 +182,7 @@ def trigger_github_action(workflow_name, button_label):
         "Authorization": f"token {token}",
     }
     with st.status(f"🚀 Triggering {button_label}...", expanded=False) as status:
-        res = requests.post(url, headers=headers, json={"ref": BRANCH})
+        res = requests.post(url, headers=headers, json={"ref": WORKFLOW_BRANCH})
         if res.status_code == 204:
             status.update(label="✅ Workflow dispatched successfully to GitHub.", state="complete")
             return True

@@ -1,0 +1,62 @@
+name: Generate Liquid Trend Universe (EMA)
+
+on:
+  workflow_dispatch:
+
+  # 15:45 IST, Monday to Friday.
+  # GitHub Actions cron uses UTC; IST is UTC+5:30.
+  schedule:
+    - cron: "15 10 * * 1-5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-data-write
+  cancel-in-progress: false
+
+jobs:
+  generate-universe:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: market-data
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate liquid trend universe
+        run: |
+          set -euo pipefail
+          python generate_liquid_trend_universe.py
+
+      - name: Commit refreshed universe files
+        run: |
+          set -euo pipefail
+
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          git add liquid_trend_universe.csv
+          git add tradingview_liquid_trend_universe.txt
+
+          if git diff --cached --quiet; then
+            echo "No output changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update EMA liquid trend universe [auto]"
+          git pull --rebase origin market-data
+          git push origin HEAD:market-data
