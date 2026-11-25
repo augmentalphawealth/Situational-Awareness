@@ -1,0 +1,18 @@
+{
+  "run_time_ist": "2026-11-25T08:18:21.975612+05:30",
+  "verify_dates": [
+    "2026-11-17",
+    "2026-11-18",
+    "2026-11-19",
+    "2026-11-20",
+    "2026-11-23"
+  ],
+  "threshold_pct": 2.0,
+  "symbols_scanned": 2561,
+  "candidate_symbols": [
+    "BONLON"
+  ],
+  "candidate_count": 1,
+  "scan_failure_count": 0,
+  "scan_failures": []
+}
