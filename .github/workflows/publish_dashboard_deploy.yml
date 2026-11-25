@@ -1,0 +1,58 @@
+name: Publish Dashboard to Lightweight Deployment Branch
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "dashboard.py"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dashboard-deploy-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          sparse-checkout: |
+            dashboard.py
+            requirements.txt
+          sparse-checkout-cone-mode: false
+
+      - name: Preserve source files
+        run: |
+          set -euo pipefail
+          cp dashboard.py /tmp/dashboard.py
+          cp requirements.txt /tmp/requirements.txt
+
+      - name: Checkout lightweight deployment branch
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin dashboard-deploy
+          git checkout -B dashboard-deploy FETCH_HEAD
+          cp /tmp/dashboard.py dashboard.py
+          cp /tmp/requirements.txt requirements.txt
+
+      - name: Push only application code
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- dashboard.py requirements.txt; then
+            echo "No dashboard source or dependency changes to publish."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard.py requirements.txt
+          git commit -m "Deploy dashboard code from main"
+          git push origin HEAD:dashboard-deploy
