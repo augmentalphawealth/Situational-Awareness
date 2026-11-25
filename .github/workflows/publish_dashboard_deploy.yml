@@ -25,6 +25,10 @@ jobs:
         with:
           ref: main
           fetch-depth: 1
+          sparse-checkout: |
+            dashboard.py
+            requirements.txt
+          sparse-checkout-cone-mode: false
 
       - name: Preserve source files
         run: |
