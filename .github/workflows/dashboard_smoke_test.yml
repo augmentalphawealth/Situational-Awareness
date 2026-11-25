@@ -33,8 +33,6 @@ jobs:
           sparse-checkout: |
             dashboard.py
             requirements.txt
-            historical_breadth_regime_6yr.csv
-            dashboard_data.parquet
           sparse-checkout-cone-mode: false
 
       - name: Set up Python
