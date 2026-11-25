@@ -1,12 +1,12 @@
-streamlit
-pandas
-pyarrow
-plotly
+streamlit==1.65.0
+pandas==2.3.3
+pyarrow==25.0.1
+plotly==7.1.0
 smartapi-python
 pyotp
 python-dotenv
 bse
-requests
+requests==2.34.2
 pytz
 logzero
 websocket-client
