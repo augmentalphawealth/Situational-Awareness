@@ -1,0 +1,82 @@
+name: Dashboard Runtime Smoke Test
+
+on:
+  pull_request:
+    paths:
+      - "dashboard.py"
+      - "requirements.txt"
+      - "historical_breadth_regime_6yr.csv"
+      - "live_intraday_aggregate.csv"
+      - "live_intraday_breadth.csv"
+      - ".github/workflows/dashboard_smoke_test.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "dashboard.py"
+      - "requirements.txt"
+      - ".github/workflows/dashboard_smoke_test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dashboard-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            dashboard.py
+            requirements.txt
+            historical_breadth_regime_6yr.csv
+            dashboard_data.parquet
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dashboard dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Configure read-only GitHub token for dashboard smoke test
+        env:
+          TEST_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .streamlit
+          printf 'GITHUB_TOKEN = "%s"\n' "${TEST_GITHUB_TOKEN}" > .streamlit/secrets.toml
+
+      - name: Compile dashboard source
+        run: |
+          set -euo pipefail
+          python -m py_compile dashboard.py
+
+      - name: Execute dashboard with Streamlit AppTest
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from streamlit.testing.v1 import AppTest
+
+          app = AppTest.from_file("dashboard.py").run(timeout=180)
+
+          if app.exception:
+              for error in app.exception:
+                  print(f"Dashboard exception: {error.message}")
+                  if error.stack_trace:
+                      print(error.stack_trace)
+              raise SystemExit("Dashboard AppTest failed.")
+
+          print("Dashboard AppTest completed without Streamlit exceptions.")
+          PY

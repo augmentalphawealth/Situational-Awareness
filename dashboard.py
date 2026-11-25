@@ -52,6 +52,7 @@ def safe_int(val):
         return 0
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_latest_commit_sha():
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits/{BRANCH}?t={int(time.time())}"
     headers = {
@@ -847,12 +848,14 @@ drill_col, _ = st.columns([1.5, 1])
 with drill_col:
     param_choices = st.multiselect("Select Parameters to Filter (Combines with AND):", ["Advances (Stocks in Green)", "Declines (Stocks in Red)", "Stocks > 20 EMA (Mature Only)", "Stocks > 50 EMA (Mature Only)", "Stocks > 200 EMA (Mature Only)", "Up 4% or more Today", "Down 4% or more Today", "1-Month 25% Winners", "1-Month 25% Losers", "New 52-Week Highs (Mature > 1Yr)", "New IPO/Listing Highs (< 1Yr)"])
 
-with st.spinner("🔍 Loading stock data..."):
-    drill_data = get_drilldown_data(st.session_state.analysis_date)
+if not param_choices:
+    st.info("👆 Select one or more parameters above to load and filter the VIP stock list.")
+else:
+    with st.spinner("🔍 Loading stock data..."):
+        drill_data = get_drilldown_data(st.session_state.analysis_date)
 
-if not drill_data.empty:
-    res = drill_data.copy()
-    if param_choices:
+    if not drill_data.empty:
+        res = drill_data.copy()
         for param in param_choices:
             if param == "Advances (Stocks in Green)":
                 res = res[res["Gainer"] == True]
@@ -880,10 +883,7 @@ if not drill_data.empty:
         res = res.rename(columns={"Daily_Pct": "Daily_%_Change", "Pct_1M": "1M_%_Change"})
         st.write(f"**Found {len(res)} matching VIP active stocks** for {selected_date_display}:")
         st.dataframe(res, use_container_width=True, height=350)
-    else:
-        st.info("👆 Select one or more parameters above to filter the VIP stock list.")
-else:
-    if (
+    elif (
         st.session_state.analysis_date.normalize() == today_ist
         and not eod_for_today_available
         and full_live_available
