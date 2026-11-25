@@ -52,6 +52,7 @@ def safe_int(val):
         return 0
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_latest_commit_sha():
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits/{BRANCH}?t={int(time.time())}"
     headers = {
