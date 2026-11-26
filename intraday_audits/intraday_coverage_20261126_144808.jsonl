@@ -1,0 +1,17 @@
+{"Symbol": "CRYSTALCP", "Date": "2026-11-26 00:00:00", "Reason": "current_nse_eq_without_historical_data"}
+{"Symbol": "MROTEK", "Date": "2026-11-26 00:00:00", "Reason": "current_nse_eq_without_historical_data"}
+{"Symbol": "OLIL", "Date": "2026-11-26 00:00:00", "Reason": "current_nse_eq_without_historical_data"}
+{"Symbol": "ALFREDHE", "Date": "2026-11-26 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "APOORVA", "Date": "2026-11-26 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "POLYSPIN", "Date": "2026-11-26 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "SIEL", "Date": "2026-11-26 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "SIMPLXREA", "Date": "2026-11-26 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "THACKER", "Date": "2026-11-26 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Symbol": "WHBRADY", "Date": "2026-11-26 00:00:00", "Reason": "eligible_current_eq_missing_or_invalid_live_quote"}
+{"Date": "2026-11-26 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "ALFREDHE"}
+{"Date": "2026-11-26 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "APOORVA"}
+{"Date": "2026-11-26 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "POLYSPIN"}
+{"Date": "2026-11-26 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "SIEL"}
+{"Date": "2026-11-26 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "SIMPLXREA"}
+{"Date": "2026-11-26 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "THACKER"}
+{"Date": "2026-11-26 00:00:00", "Reason": "invalid_live_ohlcv", "Symbol": "WHBRADY"}
